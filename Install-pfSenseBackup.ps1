@@ -297,7 +297,7 @@ Ok "$osNome (build $osBuild, $osBits) - PowerShell $($PSVersionTable.PSVersion)"
 if ($osTemCurl) {
     Ok 'esta versao do Windows ja traz o curl.exe: nada precisa ser baixado.'
 } else {
-    Warn "esta versao do Windows NAO traz o curl.exe (ele so vem a partir do build $CurlDesdeBuild: Windows 10 1803 / Server 2019)."
+    Warn "esta versao do Windows NAO traz o curl.exe (ele so vem a partir do build ${CurlDesdeBuild}: Windows 10 1803 / Server 2019)."
     Warn 'o instalador vai procurar um curl ja existente; se nao achar, explica e PERGUNTA antes de baixar o curl oficial.'
 }
 
