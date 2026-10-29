@@ -1,5 +1,7 @@
 # pfSense-Backup
 
+[![Testes](https://github.com/AlexandreAlan/pfSense-Backup/actions/workflows/testes.yml/badge.svg)](https://github.com/AlexandreAlan/pfSense-Backup/actions/workflows/testes.yml)
+
 Backup automático e diário do `config.xml` de firewalls **pfSense**, feito por um servidor **Windows** (normalmente o AD do cliente), usando a própria WebGUI do pfSense.
 
 - Não precisa instalar nada no pfSense, só criar um **grupo `BACKUP-PFSENSE`** e um **usuário dedicado** com permissão exclusiva de backup. O instalador confere se ficou certo.
@@ -49,6 +51,7 @@ Pronto. Ele confere tudo, cria a tarefa diária e faz o primeiro backup. Se algo
 8. [Segurança](#segurança)
 9. [Referência dos arquivos](#referência-dos-arquivos)
 10. [Checklist rápido](#checklist-rápido)
+11. [Testes](#testes)
 
 ---
 
@@ -609,6 +612,41 @@ Para um cliente novo:
 - [ ] (Recomendado) `-Encrypt -CopyTo` para uma cópia fora do servidor, com permissão para a conta do computador
 - [ ] Monitoramento do evento 1001 / ausência do 1000 (e 1002, se usar `CopyTo`) configurado
 - [ ] Dados do cadastro registrados internamente (fora deste repo)
+
+---
+
+## Testes
+
+Cada push roda os testes automaticamente no GitHub Actions (workflow **Testes**, badge no topo). Eles também podem ser rodados na mão.
+
+| Teste | Onde roda | O que confere |
+|---|---|---|
+| **Sintaxe** (`tests/Test-Sintaxe.ps1`) | Windows, no **Windows PowerShell 5.1** de verdade (o mesmo do Server 2016) | Parser do PowerShell nos dois scripts e se os `.ps1` continuam em ASCII puro |
+| **Lint** (`tests/Test-Sintaxe.ps1 -Analyzer`) | Windows, pwsh | PSScriptAnalyzer, incluindo a regra que confere se a sintaxe é compatível com o PowerShell **4.0 e 5.1** |
+| **Funcional** (`tests/run-funcional.sh`) | Linux | As **funções reais** dos scripts contra um pfSense simulado (`tests/mock_pfsense.py`), nos 6 cenários abaixo |
+
+Cenários do teste funcional, sempre com uma senha "difícil" (`"`, `\`, `$`, `:`, crase, espaço e acento):
+
+1. O instalador lê o certificado da WebGUI e calcula o pin igual ao `openssl`.
+2. Login + download + validação do XML + logout.
+3. Backup criptografado (`.xml.enc`) com senha de criptografia difícil.
+4. `-CheckOnly`: usuário só com o privilégio de backup é aprovado.
+5. Senha errada: para na hora, **sem** nova tentativa (não aciona o sshguard).
+6. Certificado diferente do fixado: o curl recusa e **a senha nem chega no servidor**.
+
+Rodar na mão:
+
+```powershell
+# Windows (PowerShell 5.1 ou pwsh)
+.\tests\Test-Sintaxe.ps1 -Analyzer
+```
+
+```bash
+# Linux/WSL: precisa de pwsh, python3, openssl e curl
+bash tests/run-funcional.sh
+```
+
+O que os testes **não** cobrem, porque depende de um Windows real com um pfSense real: `icacls`, Agendador de Tarefas, Log de Eventos, download do curl no Server 2016 e o curl do Windows (Schannel). Por isso o instalador sempre faz um **backup de teste** no fim.
 
 ---
 

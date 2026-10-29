@@ -1,0 +1,36 @@
+name: Testes
+
+# Roda a cada push/PR. Dois jobs:
+#  - sintaxe:    parser do Windows PowerShell 5.1 DE VERDADE (o mesmo do Server
+#                2016 dos clientes) + PSScriptAnalyzer com a regra de
+#                compatibilidade 4.0/5.1.
+#  - funcional:  as funcoes reais dos scripts contra um pfSense simulado
+#                (login com CSRF, senha com caracteres dificeis por stdin,
+#                pinning do certificado, criptografia, -CheckOnly, logout).
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sintaxe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parser do Windows PowerShell 5.1
+        shell: powershell
+        run: .\tests\Test-Sintaxe.ps1
+
+      - name: PSScriptAnalyzer (compatibilidade 4.0 / 5.1)
+        shell: pwsh
+        run: .\tests\Test-Sintaxe.ps1 -Analyzer
+
+  funcional:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Testes contra o pfSense simulado
+        run: bash tests/run-funcional.sh
