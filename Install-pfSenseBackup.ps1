@@ -82,6 +82,13 @@
     compartilhamento. Recomendado junto com -Encrypt. Use -CopyTo '' para
     desligar.
 
+.PARAMETER CurlPath
+    Caminho do curl.exe. Normalmente nao precisa: o instalador procura em
+    C:\Windows\System32\curl.exe (Windows 10 1803+ / Server 2019+), em
+    <BaseDir>\bin\curl.exe e no PATH. No Server 2016/2012 R2, que nao trazem
+    o curl, copie o curl oficial (https://curl.se/windows/) para
+    <BaseDir>\bin\curl.exe ou informe o caminho aqui.
+
 .PARAMETER TrustNewCert
     Aceita um certificado da WebGUI diferente do fixado no cadastro. Use so
     depois de confirmar que a troca foi legitima (certificado renovado).
@@ -138,6 +145,8 @@ param(
     # ===================================================================
 
     [string]$CopyTo,
+
+    [string]$CurlPath,
 
     [switch]$IncludeRRD,
     [switch]$Encrypt,
@@ -363,6 +372,37 @@ if ((Resolve-Path $aqui).Path.TrimEnd('\') -ne (Resolve-Path $BaseDir).Path.Trim
 }
 if (-not (Test-Path $Engine)) { throw "motor nao encontrado em $Engine." }
 
+# ------------------------------ curl.exe ------------------------------
+# Verificado ANTES de pedir senha: sem curl nada funciona. Windows 10 1803+ e
+# Server 2019+ ja trazem o curl.exe; Server 2016/2012 R2 nao.
+Step 'curl.exe'
+$curlSys = Join-Path $env:SystemRoot 'System32\curl.exe'
+$curlBin = Join-Path $BaseDir 'bin\curl.exe'
+if ($CurlPath -and -not (Test-Path $CurlPath)) { throw "-CurlPath informado, mas o arquivo nao existe: $CurlPath" }
+$candidatos = @()
+if ($CurlPath) { $candidatos += $CurlPath }
+elseif ($existing -and $existing.CurlPath) { $candidatos += [string]$existing.CurlPath }
+$candidatos += @($curlSys, $curlBin)
+$noPath = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($noPath) { $candidatos += $noPath.Path }
+$curl = $null
+foreach ($c in $candidatos) { if ($c -and (Test-Path $c)) { $curl = $c; break } }
+if (-not $curl) {
+    throw ("curl.exe nao encontrado. Este Windows nao traz o curl (ele so vem de fabrica no Windows 10 1803+ e no Server 2019+).`n" +
+           "    1. Baixe o curl oficial para Windows (64-bit): https://curl.se/windows/`n" +
+           "    2. Do ZIP, copie o arquivo bin\curl.exe para $curlBin`n" +
+           "    3. Rode este instalador de novo (ou informe -CurlPath <caminho do curl.exe>).")
+}
+$verCurl = [string](& $curl --version | Select-Object -First 1)
+$mv = [regex]::Match($verCurl, '^curl (\d+)\.(\d+)')
+if (-not $mv.Success) { throw "$curl nao parece ser o curl (saida de --version: $verCurl)." }
+if ([version]('{0}.{1}' -f $mv.Groups[1].Value, $mv.Groups[2].Value) -lt [version]'7.44') {
+    throw "$curl e o curl $($mv.Groups[1].Value).$($mv.Groups[2].Value): antigo demais (precisa 7.44+ para fixar o certificado). Baixe o atual em https://curl.se/windows/."
+}
+Ok "$curl  ($(($verCurl -split ' ')[0..1] -join ' '))"
+# So grava no JSON se nao for o do Windows; assim o motor acha o mesmo curl.
+$curlSalvar = if ($curl -ieq $curlSys) { '' } else { $curl }
+
 # ------------------------ 4. chave e senhas ---------------------------
 Step 'Chave e senha'
 if (-not (Test-Path $KeyFile)) {
@@ -460,7 +500,7 @@ $cfg = [ordered]@{
     MaxTime        = [int](Get-Existing 'MaxTime' 300)
     Retries        = [int](Get-Existing 'Retries' 3)
     RetryDelay     = [int](Get-Existing 'RetryDelay' 60)
-    CurlPath       = [string](Get-Existing 'CurlPath' '')
+    CurlPath       = [string]$curlSalvar
 }
 New-Object psobject -Property $cfg | ConvertTo-Json | Set-Content -Path $CfgFile -Encoding ASCII
 Ok $CfgFile

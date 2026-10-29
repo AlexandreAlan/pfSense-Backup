@@ -307,12 +307,15 @@ try {
     $retryDelay = if ($cfg.RetryDelay)     { [int]$cfg.RetryDelay }     else { 60 }
     $includeRRD = [bool]$cfg.IncludeRRD
     $encrypt    = [bool]$cfg.Encrypt
-    $script:Curl = if ($cfg.CurlPath) { $cfg.CurlPath } else { Join-Path $env:SystemRoot 'System32\curl.exe' }
+    # curl: o do JSON; senao o do Windows (10 1803+ / Server 2019+); senao o
+    # <BaseDir>\bin\curl.exe (Server 2016/2012 R2, que nao trazem o curl).
+    $script:Curl = if ($cfg.CurlPath) { [string]$cfg.CurlPath } else { Join-Path $env:SystemRoot 'System32\curl.exe' }
+    if (-not $cfg.CurlPath -and -not (Test-Path $script:Curl)) { $script:Curl = Join-Path $BaseDir 'bin\curl.exe' }
     if ($CheckOnly) { $retries = 1 }   # o instalador quer a resposta na hora
 
     if (-not $cfg.Host) { throw "campo 'Host' vazio em $CfgFile." }
     if (-not $cfg.User) { throw "campo 'User' vazio em $CfgFile." }
-    if (-not (Test-Path $script:Curl)) { throw "curl.exe nao encontrado em $($script:Curl) (defina 'CurlPath' no JSON)." }
+    if (-not (Test-Path $script:Curl)) { throw "curl.exe nao encontrado em $($script:Curl). No Server 2016 e anteriores, copie o curl oficial (https://curl.se/windows/) para $(Join-Path $BaseDir 'bin\curl.exe') ou defina 'CurlPath' no JSON." }
 
     # -k: a WebGUI usa certificado autoassinado. Quem garante que e o firewall
     # certo e o --pinnedpubkey (o curl confere a chave mesmo com -k).
