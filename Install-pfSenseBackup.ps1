@@ -351,8 +351,9 @@ if ($LASTEXITCODE -ne 0) {
 Ok 'pasta acessivel apenas por SYSTEM e Administradores (conteudo herda da pasta)'
 
 # ------------------------ 3. copia do motor ---------------------------
-$src = Join-Path $PSScriptRoot 'Backup-pfSense.ps1'
-if ((Resolve-Path $PSScriptRoot).Path.TrimEnd('\') -ne (Resolve-Path $BaseDir).Path.TrimEnd('\')) {
+$aqui = Split-Path -Parent $MyInvocation.MyCommand.Definition   # mesmo motivo do motor: nao confiar no $PSScriptRoot
+$src = Join-Path $aqui 'Backup-pfSense.ps1'
+if ((Resolve-Path $aqui).Path.TrimEnd('\') -ne (Resolve-Path $BaseDir).Path.TrimEnd('\')) {
     if (-not (Test-Path $src)) { throw "Backup-pfSense.ps1 nao encontrado ao lado deste instalador ($src)." }
     Copy-Item $src $Engine -Force
     Copy-Item $PSCommandPath (Join-Path $BaseDir 'Install-pfSenseBackup.ps1') -Force
@@ -483,7 +484,7 @@ if ($NoTest) {
     Warn 'verificacao do usuario PULADA (-NoTest). A tarefa sera criada sem validar.'
 } else {
     Step "Verificando o usuario '$User' no pfSense"
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name -CheckOnly
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name -BaseDir $BaseDir -CheckOnly
     if ($LASTEXITCODE -ne 0) {
         throw ("Verificacao REPROVADA - a tarefa NAO foi criada. Corrija conforme a mensagem acima " +
                "(grupo $GroupName so com 'WebCfg - Diagnostics: Backup & Restore') e rode de novo " +
@@ -494,7 +495,7 @@ if ($NoTest) {
 
 # ------------------------ 9. tarefa agendada --------------------------
 Step "Tarefa agendada '$TaskName' (diaria $Time, SYSTEM)"
-$tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name"
+$tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name -BaseDir $BaseDir"
 & schtasks.exe /Create /F /TN $TaskName /RU SYSTEM /RL HIGHEST /SC DAILY /ST $Time /TR $tr | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "schtasks falhou ao criar a tarefa (exit $LASTEXITCODE)." }
 Ok 'tarefa criada/atualizada'
@@ -504,7 +505,7 @@ if ($NoTest) {
     Warn 'backup de teste pulado (-NoTest).'
 } else {
     Step 'Rodando backup de teste'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name -BaseDir $BaseDir
     if ($LASTEXITCODE -eq 0) { Ok 'backup de teste OK' }
     else { Warn "backup de teste FALHOU - veja $(Join-Path $BaseDir "logs\$Name.log") e a secao Problemas do README." }
 }

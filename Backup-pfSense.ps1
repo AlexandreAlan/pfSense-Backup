@@ -37,7 +37,8 @@
     Nome do perfil (o mesmo usado no Install-pfSenseBackup.ps1).
 
 .PARAMETER BaseDir
-    Pasta raiz da instalacao. Padrao: a pasta onde este script esta.
+    Pasta raiz da instalacao. Padrao: a pasta onde este script esta. A tarefa
+    agendada e o instalador sempre informam -BaseDir explicitamente.
 
 .PARAMETER CheckOnly
     Nao baixa nada. So confere se o usuario do pfSense esta configurado
@@ -60,13 +61,17 @@ param(
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$Name,
 
-    [string]$BaseDir = $PSScriptRoot,
+    [string]$BaseDir,
 
     [switch]$CheckOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $EventSource = 'pfSense-Backup'
+# Pasta do proprio script. NAO usar $PSScriptRoot como padrao no param(): em alguns
+# Windows PowerShell (visto no Server 2016) ele chega VAZIO ali dentro e o primeiro
+# Join-Path quebra com "cadeia de caracteres vazia".
+if ([string]::IsNullOrWhiteSpace($BaseDir)) { $BaseDir = Split-Path -Parent $MyInvocation.MyCommand.Definition }
 # O que o PowerShell manda por pipe para o curl (config com as senhas, -K -) sai em
 # UTF-8 sem BOM. O padrao do PS 5.1 e ASCII e trocaria acentos da senha por '?'.
 $OutputEncoding = New-Object Text.UTF8Encoding($false)
