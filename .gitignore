@@ -1,0 +1,7 @@
+# Dados de cada cliente: NUNCA publicar
+config/*.json
+!config/*.json.example
+secrets/
+backups/
+logs/
+*.tmp

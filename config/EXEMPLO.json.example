@@ -1,0 +1,17 @@
+{
+    "Name":  "EXEMPLO",
+    "Host":  "192.168.1.1",
+    "Port":  443,
+    "User":  "srvbackup-pfsense",
+    "KeepDays":  90,
+    "MinKeep":  10,
+    "IncludeRRD":  false,
+    "Encrypt":  false,
+    "CopyTo":  "",
+    "PubKeyPin":  "sha256//COLOQUE+AQUI+O+PIN+GRAVADO+PELO+INSTALADOR=",
+    "ConnectTimeout":  15,
+    "MaxTime":  300,
+    "Retries":  3,
+    "RetryDelay":  60,
+    "CurlPath":  ""
+}
