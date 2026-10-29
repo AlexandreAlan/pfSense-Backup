@@ -5,3 +5,4 @@ secrets/
 backups/
 logs/
 *.tmp
+status/

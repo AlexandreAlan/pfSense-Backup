@@ -12,7 +12,14 @@
         <BaseDir>\secrets\<Nome>.pass    senha do pfSense cifrada com a chave
         <BaseDir>\secrets\<Nome>.encpass (opcional) senha de criptografia do backup
         <BaseDir>\backups\<Nome>\        backups gerados
-        <BaseDir>\logs\<Nome>.log        log de execucao
+        <BaseDir>\logs\<Nome>\<Nome>.log log de execucao (uma pasta por firewall)
+        <BaseDir>\status\<Nome>\         3 arquivos para o Zabbix (ver abaixo)
+
+    Arquivos de status (um valor por arquivo, sem quebra de linha - faceis de
+    ler com vfs.file.contents no agente Zabbix):
+        status.txt     OK | AVISO | ERRO   (AVISO = backup OK, mas a copia externa falhou)
+        ultimo-ok.txt  segundos desde 1970 (UTC) do ultimo backup bom
+        mensagem.txt   data + ultima mensagem (motivo do erro, arquivo gerado...)
 
     O perfil e criado pelo Install-pfSenseBackup.ps1. Este script so le.
 
@@ -87,8 +94,10 @@ $KeyFile   = Join-Path $SecDir  "$Name.key"
 $PassFile  = Join-Path $SecDir  "$Name.pass"
 $EncFile   = Join-Path $SecDir  "$Name.encpass"
 $BkDir     = Join-Path $BaseDir "backups\$Name"
-$LogDir    = Join-Path $BaseDir 'logs'
+$LogDir    = Join-Path $BaseDir "logs\$Name"
 $LogFile   = Join-Path $LogDir  "$Name.log"
+$LogAntigo = Join-Path $BaseDir "logs\$Name.log"   # versoes antigas: log solto em logs\
+$StatusDir = Join-Path $BaseDir "status\$Name"
 $CookieJar = Join-Path $SecDir  ("cookies_" + [guid]::NewGuid().ToString('N') + '.tmp')
 
 $script:NoRetry = $false
@@ -106,6 +115,21 @@ function Write-Event([int]$Id, [string]$Type, [string]$Message) {
         if ([Diagnostics.EventLog]::SourceExists($EventSource)) {
             Write-EventLog -LogName Application -Source $EventSource -EventId $Id `
                 -EntryType $Type -Message "[$Name] $Message" -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+
+function Write-Status([string]$Status, [string]$Message) {
+    # Os 3 arquivos que o Zabbix le. Gravados sem quebra de linha e em ASCII para
+    # o vfs.file.contents devolver exatamente "OK", "ERRO"... Nunca derruba o backup.
+    try {
+        if (-not (Test-Path $StatusDir)) { New-Item -ItemType Directory -Force $StatusDir | Out-Null }
+        $ascii = New-Object Text.ASCIIEncoding
+        [IO.File]::WriteAllText((Join-Path $StatusDir 'status.txt'), $Status, $ascii)
+        [IO.File]::WriteAllText((Join-Path $StatusDir 'mensagem.txt'), "$((Get-Date).ToString('s'))  $Message", $ascii)
+        if ($Status -ne 'ERRO') {
+            $epoch = [int64]([datetime]::UtcNow - [datetime]'1970-01-01').TotalSeconds
+            [IO.File]::WriteAllText((Join-Path $StatusDir 'ultimo-ok.txt'), "$epoch", $ascii)
         }
     } catch {}
 }
@@ -285,6 +309,10 @@ try {
     foreach ($d in @($BkDir, $LogDir)) {
         if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null }
     }
+    # Instalacao antiga: o log ficava solto em logs\<Nome>.log. Move para a pasta
+    # do firewall (logs\<Nome>\) sem perder o historico.
+    if ((Test-Path $LogAntigo) -and -not (Test-Path $LogFile)) { Move-Item $LogAntigo $LogFile }
+    if (Test-Path "$LogAntigo.old") { Move-Item "$LogAntigo.old" "$LogFile.old" -Force }
 
     # Rotacao simples do log (> 5 MB vira .old)
     if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt 5MB) {
@@ -358,6 +386,7 @@ try {
         # 6) retencao local
         Remove-OldBackups $BkDir
 
+        $cw = $null
         # 7) copia para fora do servidor (NAS/outro servidor). Falha aqui nao
         #    invalida o backup local: vira evento 1002 (aviso) para o monitoramento.
         if ($cfg.CopyTo) {
@@ -375,13 +404,19 @@ try {
         }
 
         Write-Log 'Concluido.'
-        Write-Event 1000 'Information' "Backup OK: $($result.File) ($([math]::Round($result.Size / 1KB, 1)) KB)$($result.Note)"
+        $resumo = "Backup OK: $($result.File) ($([math]::Round($result.Size / 1KB, 1)) KB)$($result.Note)"
+        Write-Event 1000 'Information' $resumo
+        if ($cw) { Write-Status 'AVISO' "$resumo - mas a copia externa FALHOU: $cw" }
+        else     { Write-Status 'OK' $resumo }
     }
 }
 catch {
     $msg = $_.Exception.Message
     Write-Log "ERRO: $msg"
-    if (-not $CheckOnly) { Write-Event 1001 'Error' "Backup FALHOU: $msg" }
+    if (-not $CheckOnly) {
+        Write-Event 1001 'Error' "Backup FALHOU: $msg"
+        Write-Status 'ERRO' "Backup FALHOU: $msg"
+    }
     $exitCode = 1
 }
 finally {

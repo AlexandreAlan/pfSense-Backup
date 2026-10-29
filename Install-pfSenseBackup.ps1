@@ -65,13 +65,15 @@
     primeiro cadastro e AUTORIZA baixar o curl oficial se ele faltar.
 
 .PARAMETER Time
-    Horario diario da tarefa (HH:mm). Padrao 02:00.
+    Horario diario da tarefa (HH:mm, 24h). Padrao 02:00. Se nao for informado,
+    o instalador PERGUNTA, mostrando o valor atual entre colchetes (ENTER mantem).
 
 .PARAMETER KeepDays
-    Apaga backups mais velhos que N dias. Padrao 90.
+    Apaga backups mais velhos que N dias. Padrao 90. Perguntado se faltar.
 
 .PARAMETER MinKeep
     Sempre preserva os N backups mais recentes, mesmo velhos. Padrao 10.
+    Perguntado se faltar.
 
 .PARAMETER IncludeRRD
     Inclui os graficos RRD no backup (arquivo bem maior).
@@ -278,7 +280,9 @@ if ($Uninstall) {
     foreach ($f in @($CfgFile, $KeyFile, $PassFile, $EncFile)) {
         if (Test-Path $f) { Remove-Item $f -Force; Ok "apagado $f" }
     }
-    Ok "backups mantidos em $(Join-Path $BaseDir "backups\$Name") (apague na mao se quiser)"
+    $st = Join-Path $BaseDir "status\$Name"
+    if (Test-Path $st) { Remove-Item $st -Recurse -Force; Ok "apagado $st (status do Zabbix)" }
+    Ok "backups mantidos em $(Join-Path $BaseDir "backups\$Name") e log em $(Join-Path $BaseDir "logs\$Name") (apague na mao se quiser)"
     return
 }
 
@@ -309,6 +313,7 @@ if (-not $PSBoundParameters.ContainsKey('User')       -and $existing -and $exist
 if (-not $PSBoundParameters.ContainsKey('Port')       -and $existing -and $existing.Port)     { $Port     = [int]$existing.Port }
 if (-not $PSBoundParameters.ContainsKey('KeepDays')   -and $existing -and $existing.KeepDays) { $KeepDays = [int]$existing.KeepDays }
 if (-not $PSBoundParameters.ContainsKey('MinKeep')    -and $existing -and $existing.MinKeep)  { $MinKeep  = [int]$existing.MinKeep }
+if (-not $PSBoundParameters.ContainsKey('Time')       -and $existing -and $existing.Time)     { $Time     = [string]$existing.Time }
 if (-not $PSBoundParameters.ContainsKey('IncludeRRD') -and $existing) { $IncludeRRD = [bool]$existing.IncludeRRD }
 if (-not $PSBoundParameters.ContainsKey('Encrypt')    -and $existing) { $Encrypt    = [bool]$existing.Encrypt }
 if (-not $PSBoundParameters.ContainsKey('CopyTo')     -and $existing -and $existing.CopyTo) { $CopyTo = [string]$existing.CopyTo }
@@ -340,6 +345,47 @@ if (-not $PSBoundParameters.ContainsKey('Port') -and -not $Yes) {
     }
     Ok "porta da WebGUI: $Port"
 }
+
+# Agendamento e retencao: mesma ideia da porta. Pergunta o que nao veio na linha
+# de comando, mostrando o valor atual entre colchetes (padrao num cadastro novo,
+# ou o que ja esta salvo no perfil). ENTER mantem. Com -Yes nao pergunta.
+function Read-Valor([string]$Rotulo, [string]$Atual, [scriptblock]$Valido, [string]$Ajuda) {
+    while ($true) {
+        $r = Read-Host "  $Rotulo [$Atual]"
+        if ([string]::IsNullOrWhiteSpace($r)) { return $Atual }
+        $r = $r.Trim()
+        if (& $Valido $r) { return $r }
+        Warn $Ajuda
+    }
+}
+$perguntaAgenda = -not $Yes -and -not ($PSBoundParameters.ContainsKey('Time') -and
+                  $PSBoundParameters.ContainsKey('KeepDays') -and $PSBoundParameters.ContainsKey('MinKeep'))
+if ($perguntaAgenda) {
+    Write-Host ''
+    Write-Host '  AGENDAMENTO E RETENCAO DOS BACKUPS' -ForegroundColor Yellow
+    Write-Host '  ----------------------------------'
+    Write-Host '  HORARIO:        hora em que o backup roda todo dia (formato 24h, HH:mm).'
+    Write-Host '                  Prefira fora do expediente. Ex.: 02:00, 23:30.'
+    Write-Host '  DIAS GUARDADOS: backups mais velhos que isso sao apagados sozinhos.'
+    Write-Host '  MINIMO MANTIDO: quantos backups mais recentes NUNCA sao apagados, mesmo que'
+    Write-Host '                  sejam mais velhos que os dias acima. Protege se o backup parar'
+    Write-Host '                  de funcionar por semanas: os ultimos bons continuam la.'
+    Write-Host ''
+    if (-not $PSBoundParameters.ContainsKey('Time')) {
+        $Time = Read-Valor 'Horario do backup diario (HH:mm)' $Time { param($v) $v -match '^([01]\d|2[0-3]):[0-5]\d$' } `
+            'horario invalido: use HH:mm de 00:00 a 23:59 (ex.: 02:00).'
+    }
+    $n = 0
+    if (-not $PSBoundParameters.ContainsKey('KeepDays')) {
+        $KeepDays = [int](Read-Valor 'Dias guardados (1 a 3650)' "$KeepDays" { param($v) [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 3650 } `
+            'valor invalido: digite um numero de 1 a 3650.')
+    }
+    if (-not $PSBoundParameters.ContainsKey('MinKeep')) {
+        $MinKeep = [int](Read-Valor 'Minimo de backups mantidos (1 a 1000)' "$MinKeep" { param($v) [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 1000 } `
+            'valor invalido: digite um numero de 1 a 1000.')
+    }
+}
+Ok "backup diario as $Time; apaga os com mais de $KeepDays dia(s), mas mantem sempre os $MinKeep mais recentes"
 
 # ---------------------- 0. pre-requisito no pfSense -------------------
 if (-not $Yes -and (-not $existing -or $UpdatePassword -or $PSBoundParameters.ContainsKey('User'))) {
@@ -576,6 +622,7 @@ $cfg = [ordered]@{
     Host           = $FwHost
     Port           = $Port
     User           = $User
+    Time           = $Time
     KeepDays       = $KeepDays
     MinKeep        = $MinKeep
     IncludeRRD     = [bool]$IncludeRRD
@@ -633,10 +680,19 @@ if ($NoTest) {
     Step 'Rodando backup de teste'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name -BaseDir $BaseDir
     if ($LASTEXITCODE -eq 0) { Ok 'backup de teste OK' }
-    else { Warn "backup de teste FALHOU - veja $(Join-Path $BaseDir "logs\$Name.log") e a secao Problemas do README." }
+    else { Warn "backup de teste FALHOU - veja $(Join-Path $BaseDir "logs\$Name\$Name.log") e a secao Problemas do README." }
 }
 
 Write-Host ''
+Write-Host "Resumo do perfil '$Name':" -ForegroundColor Cyan
+Write-Host "    firewall:      https://${FwHost}:$Port  (usuario $User)"
+Write-Host "    agendamento:   todo dia as $Time (tarefa '$TaskName', como SYSTEM)"
+Write-Host "    retencao:      $KeepDays dia(s), mantendo sempre os $MinKeep mais recentes"
+Write-Host "    backups:       $(Join-Path $BaseDir "backups\$Name")"
+Write-Host "    log:           $(Join-Path $BaseDir "logs\$Name\$Name.log")"
+Write-Host "    Zabbix:        $(Join-Path $BaseDir "status\$Name")\  (status.txt, ultimo-ok.txt, mensagem.txt)"
+Write-Host "    Para mudar horario/retencao: rode de novo so com -Name $Name e responda as perguntas."
+Write-Host ''
 Write-Host "Pronto. Para testar como SYSTEM (igual a execucao diaria):" -ForegroundColor Cyan
 Write-Host "    schtasks /Run /TN `"$TaskName`""
-Write-Host "    Start-Sleep 10; Get-Content $(Join-Path $BaseDir "logs\$Name.log") -Tail 5"
+Write-Host "    Start-Sleep 10; Get-Content $(Join-Path $BaseDir "logs\$Name\$Name.log") -Tail 5"

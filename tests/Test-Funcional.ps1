@@ -19,7 +19,7 @@ Set-Location $WorkDir   # o curl grava "-o NUL" como arquivo no Linux: fica na p
 # Carrega as funcoes REAIS dos scripts do repositorio (sem rodar o main deles).
 $repo = Split-Path -Parent $PSScriptRoot
 $defs = @()
-foreach ($par in @(@('Backup-pfSense.ps1', @('Write-Log','Write-Event','Stop-Permanent','Get-Csrf','ConvertTo-CurlConfig','Invoke-Curl','Invoke-Logout','Invoke-Backup')),
+foreach ($par in @(@('Backup-pfSense.ps1', @('Write-Log','Write-Event','Stop-Permanent','Get-Csrf','ConvertTo-CurlConfig','Invoke-Curl','Invoke-Logout','Invoke-Backup','Write-Status')),
                    @('Install-pfSenseBackup.ps1', @('Get-DerElement','Get-WebGuiCert')))) {
     $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repo $par[0]), [ref]$null, [ref]$null)
     $ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] }, $true) |
@@ -29,6 +29,7 @@ foreach ($par in @(@('Backup-pfSense.ps1', @('Write-Log','Write-Event','Stop-Per
 
 $Name = 'TESTE'; $EventSource = 'pfSense-Backup'; $LogFile = "$WorkDir/teste.log"
 $BkDir = "$WorkDir/backups"; New-Item -ItemType Directory -Force $BkDir | Out-Null
+$StatusDir = "$WorkDir/status/TESTE"
 $ForbiddenPages = @('system_usermanager.php','firewall_rules.php','diag_command.php')
 $cfg = [pscustomobject]@{ User = 'srvbackup-pfsense' }
 $base = "https://127.0.0.1:$Porta"
@@ -101,6 +102,23 @@ Cenario 'pin errado -> curl exit 90, senha nao enviada' {
     $depois = Stats
     if (($depois.logins_ok + $depois.logins_falhos) -ne ($antes.logins_ok + $antes.logins_falhos)) { throw 'a senha CHEGOU no servidor!' }
     '(conexao recusada antes do login)'
+}
+
+Write-Host '7) Arquivos de status para o Zabbix'
+Cenario 'status.txt / ultimo-ok.txt / mensagem.txt' {
+    Write-Status 'OK' 'Backup OK: teste'
+    $st  = [IO.File]::ReadAllText("$StatusDir/status.txt")
+    $ok1 = [IO.File]::ReadAllText("$StatusDir/ultimo-ok.txt")
+    if ($st -ne 'OK') { throw "status.txt = '$st' (esperado 'OK', sem quebra de linha)" }
+    if ($ok1 -notmatch '^\d{10}$') { throw "ultimo-ok.txt = '$ok1' (esperado so os segundos)" }
+    $agora = [int64]([datetime]::UtcNow - [datetime]'1970-01-01').TotalSeconds
+    if ([math]::Abs($agora - [int64]$ok1) -gt 5) { throw "ultimo-ok.txt longe de agora: $ok1 x $agora" }
+    Start-Sleep -Seconds 1
+    Write-Status 'ERRO' 'Backup FALHOU: teste'
+    if ([IO.File]::ReadAllText("$StatusDir/status.txt") -ne 'ERRO') { throw 'status.txt nao virou ERRO' }
+    if ([IO.File]::ReadAllText("$StatusDir/ultimo-ok.txt") -ne $ok1) { throw 'ultimo-ok.txt NAO pode mudar num erro' }
+    if ([IO.File]::ReadAllText("$StatusDir/mensagem.txt") -notmatch 'FALHOU: teste$') { throw 'mensagem.txt sem o motivo' }
+    '(OK -> ERRO, ultimo-ok preservado no erro)'
 }
 
 Write-Host ''
