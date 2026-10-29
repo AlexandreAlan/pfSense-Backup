@@ -14,9 +14,9 @@
 
     Faz, de uma vez, todo o setup de um perfil novo:
       1. cria a estrutura em <BaseDir> (config, secrets, backups, logs)
-      2. copia o Backup-pfSense.ps1 para <BaseDir> (se rodado de outra pasta)
-      3. trava as permissoes da pasta (so SYSTEM + Administradores, por SID,
-         funciona em Windows em portugues ou ingles)
+      2. trava as permissoes da pasta (so SYSTEM + Administradores, por SID,
+         funciona em Windows em portugues ou ingles); o conteudo herda
+      3. copia o Backup-pfSense.ps1 para <BaseDir> (se rodado de outra pasta)
       4. gera a chave AES do perfil e grava a senha do pfSense cifrada
       5. testa a porta da WebGUI e FIXA a chave do certificado (pinning): dai
          em diante o backup recusa conversar com qualquer outro equipamento
@@ -332,7 +332,25 @@ foreach ($d in @($BaseDir, $CfgDir, $SecDir, (Join-Path $BaseDir 'backups'), (Jo
 }
 Ok 'pastas prontas'
 
-# ------------------------ 2. copia do motor ---------------------------
+# --------------------------- 2. permissoes ----------------------------
+# A ACL explicita vai SO na pasta raiz; tudo dentro dela HERDA. Antes isto era um
+# unico icacls com /T, que aplicava "/inheritance:r" e "(OI)(CI)" tambem em cada
+# arquivo: em arquivo o (OI)(CI) nao vale, o grant falhava (escondido pelo /C /Q)
+# e o arquivo ficava SEM permissao nenhuma - nem SYSTEM conseguia ler o script.
+# Feito ANTES da copia: assim tambem conserta uma instalacao antiga ja travada
+# (o /reset funciona porque o dono dos arquivos, Administradores, sempre pode
+# reescrever a ACL).
+Step 'Travando permissoes (SYSTEM + Administradores)'
+& icacls.exe $BaseDir /inheritance:r /grant:r "${SidSystem}:(OI)(CI)F" "${SidAdmins}:(OI)(CI)F" /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls falhou ao travar $BaseDir (exit $LASTEXITCODE)." }
+& icacls.exe (Join-Path $BaseDir '*') /reset /T /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw ("icacls falhou ao aplicar a heranca dentro de $BaseDir (exit $LASTEXITCODE). " +
+           "Se a pasta veio de outra instalacao, assuma a posse e rode de novo: takeown /F $BaseDir /R /A /D S  (Windows em ingles: /D Y)")
+}
+Ok 'pasta acessivel apenas por SYSTEM e Administradores (conteudo herda da pasta)'
+
+# ------------------------ 3. copia do motor ---------------------------
 $src = Join-Path $PSScriptRoot 'Backup-pfSense.ps1'
 if ((Resolve-Path $PSScriptRoot).Path.TrimEnd('\') -ne (Resolve-Path $BaseDir).Path.TrimEnd('\')) {
     if (-not (Test-Path $src)) { throw "Backup-pfSense.ps1 nao encontrado ao lado deste instalador ($src)." }
@@ -343,12 +361,6 @@ if ((Resolve-Path $PSScriptRoot).Path.TrimEnd('\') -ne (Resolve-Path $BaseDir).P
     Ok 'rodando de dentro de BaseDir, nada a copiar'
 }
 if (-not (Test-Path $Engine)) { throw "motor nao encontrado em $Engine." }
-
-# --------------------------- 3. permissoes ----------------------------
-Step 'Travando permissoes (SYSTEM + Administradores)'
-& icacls.exe $BaseDir /inheritance:r /grant:r "${SidSystem}:(OI)(CI)F" "${SidAdmins}:(OI)(CI)F" /T /C /Q | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "icacls falhou (exit $LASTEXITCODE)." }
-Ok 'pasta acessivel apenas por SYSTEM e Administradores'
 
 # ------------------------ 4. chave e senhas ---------------------------
 Step 'Chave e senha'

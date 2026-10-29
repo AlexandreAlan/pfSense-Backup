@@ -270,8 +270,8 @@ A porta fica gravada em `config\<Nome>.json` e é usada todo dia pelo backup. Se
 
 Ele mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`). Se você não passou `-Port`, pergunta a **porta da WebGUI**, mostrando o padrão `[443]` (veja [Porta da WebGUI](#porta-da-webgui)). Depois pede a senha do pfSense duas vezes e faz sozinho:
 
-- cria `C:\pfSense-Backup` e copia os scripts para lá;
-- tranca as permissões (só SYSTEM e Administradores, por SID, então funciona em Windows em português);
+- cria `C:\pfSense-Backup` e tranca as permissões: só SYSTEM e Administradores, por SID, então funciona em Windows em português. A permissão vai na pasta, e tudo dentro dela herda;
+- copia os scripts para lá;
 - gera a chave e grava a senha cifrada;
 - grava `config\FWCLIENTE.json`;
 - registra a origem de eventos `pfSense-Backup`;
@@ -454,6 +454,8 @@ Get-EventLog -LogName Application -Source pfSense-Backup -Newest 10
 | `curl.exe nao encontrado` | Windows antigo | Instalar o curl e preencher `CurlPath` no JSON |
 | `Key not valid for use in specified state` | Chave e senha não combinam (arquivo trocado ou copiado de outro servidor) | Rodar `-UpdatePassword` |
 | Funciona no teste manual mas não na tarefa | Diferença de permissão ou ACL | Rodar o instalador de novo (reaplica a ACL); ver o histórico da tarefa no Agendador |
+| `O acesso ao caminho 'C:\pfSense-Backup\Backup-pfSense.ps1' foi negado` e `icacls` mostra o arquivo **sem nenhuma permissão** | Instalação feita com uma versão antiga do instalador, que deixava os arquivos sem ACL | Baixar a versão atual e rodar o instalador de novo: ele reaplica a permissão na pasta e faz o conteúdo herdar. Se mesmo assim der *acesso negado*, assumir a posse antes: `takeown /F C:\pfSense-Backup /R /A /D S` (Windows em inglês: `/D Y`) |
+| `icacls falhou ao aplicar a heranca` | Arquivos com outro dono (pasta copiada de outra máquina) | `takeown /F C:\pfSense-Backup /R /A /D S` (inglês: `/D Y`) e rodar o instalador de novo |
 | Bloqueio por excesso de logins errados | O pfSense bloqueia o IP após várias falhas (sshguard) | Corrigir a senha e esperar o desbloqueio, ou liberar em *Diagnostics › Tables › sshguard* |
 
 Debug detalhado (mostra cada passo no console):
