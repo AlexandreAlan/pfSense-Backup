@@ -26,11 +26,11 @@ Para quem só quer fazer funcionar. O passo a passo detalhado está [mais abaixo
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-pfSenseBackup.ps1 -Name FWCLIENTE -FwHost 192.168.1.1
 ```
 
-**3. Responda `S`** quando ele perguntar do pré-requisito e **digite a senha** do usuário do pfSense duas vezes.
+**3. Responda `S`** quando ele perguntar do pré-requisito, confirme a **porta da WebGUI** (aperte ENTER se for 443, ou digite a porta, ex.: `11443`) e **digite a senha** do usuário do pfSense duas vezes.
 
 Pronto. Ele confere tudo, cria a tarefa diária e faz o primeiro backup. Se algo estiver errado, ele **para e diz o que corrigir**.
 
-> A porta da interface web do pfSense não é 443, ou o usuário tem outro nome? Acrescente `-Port <porta>` e/ou `-User <usuario>`. Veja [Entendendo o comando](#entendendo-o-comando).
+> A porta da interface web do pfSense não é 443? O instalador pergunta (veja [Porta da WebGUI](#porta-da-webgui)), ou já passe `-Port <porta>` no comando. O usuário tem outro nome? Acrescente `-User <usuario>`. Veja [Entendendo o comando](#entendendo-o-comando).
 
 ---
 
@@ -207,7 +207,7 @@ O instalador é **genérico**, serve para qualquer cliente. Os parâmetros dizem
 | `.\` | O PowerShell não roda script da pasta atual sem o `.\` na frente, por segurança. | sim |
 | `-Name FWCLIENTE` | **Nome do cadastro**, você escolhe. Vira o nome do arquivo de configuração, da pasta `backups\FWCLIENTE\`, do log e da tarefa agendada (*pfSense Backup - FWCLIENTE*). Use um nome por firewall; assim o mesmo servidor faz backup de vários. Só letras, números, `-` e `_`. | **sim** |
 | `-FwHost 192.168.1.1` | **IP do pfSense**, como o servidor enxerga (normalmente o IP da LAN, o gateway da rede). Cada cliente tem o seu. | **sim**, na primeira vez |
-| `-Port 10443` | Porta da interface web do pfSense. O padrão é **443**. Só informe se o cliente usa outra. Para descobrir: o número depois de `:` no endereço que você usa para abrir o pfSense no navegador (ex.: `https://192.168.1.1:10443` → `10443`). | só se não for 443 |
+| `-Port 11443` | Porta da interface web do pfSense. O padrão é **443**. Se você não informar, o instalador **pergunta** e mostra `[443]`: ENTER mantém, ou digite a porta certa. Informando no comando, ele não pergunta. Veja [Porta da WebGUI](#porta-da-webgui). | não (pergunta se faltar) |
 | `-User nome` | Usuário criado no passo 2. O padrão é **`srvbackup-pfsense`**. Só informe se você criou com outro nome. | só se não for o padrão |
 
 Exemplos:
@@ -231,9 +231,44 @@ Exemplos:
 
 > **Rodando de novo depois:** IP, porta e usuário ficam gravados em `config\<Nome>.json`. Nas próximas vezes basta o `-Name` mais o que quiser mudar (ex.: `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -UpdatePassword` para trocar a senha). Veja [Operação do dia a dia](#operação-do-dia-a-dia).
 
+#### Porta da WebGUI
+
+A porta é o número depois de `:` no endereço que você usa para abrir o pfSense no navegador. Sem número no endereço, ela é **443**. No pfSense, ela fica em *System › Advanced › Admin Access › TCP port* (vazio = 443).
+
+| Endereço no navegador | Porta | O que fazer na pergunta |
+|---|---|---|
+| `https://172.16.10.1` | 443 | só apertar **ENTER** |
+| `https://172.16.10.1:11443` | 11443 | digitar `11443` e ENTER |
+
+Na tela aparece assim:
+
+```
+  PORTA DA WebGUI DO pfSENSE
+  --------------------------
+  E o numero depois de ":" no endereco que voce usa para abrir o pfSense
+  no navegador. Sem numero no endereco, a porta e 443.
+     https://172.16.10.1        -> 443   (so aperte ENTER)
+     https://172.16.10.1:11443  -> digite 11443
+  No pfSense: System > Advanced > Admin Access > TCP port (vazio = 443).
+  Porta HTTPS da WebGUI [443]: 11443
+    OK  porta da WebGUI: 11443
+```
+
+Como funciona cada caso:
+
+| Situação | O que o instalador faz |
+|---|---|
+| Cadastro novo, sem `-Port` | Pergunta, com `[443]` como padrão. ENTER = 443 |
+| Perfil que já existe, sem `-Port` | Pergunta, com a **porta já salva** como padrão. ENTER mantém |
+| Com `-Port 11443` no comando | Não pergunta, usa 11443 |
+| Com `-Yes` (automação) | Não pergunta: usa a porta salva, ou 443 num cadastro novo |
+| Digitou algo que não é número de 1 a 65535 | Avisa e pergunta de novo |
+
+A porta fica gravada em `config\<Nome>.json` e é usada todo dia pelo backup. Se o teste de porta disser *sem resposta*, o instalador lembra de conferir a porta. Basta rodar de novo e digitar a porta certa: chave e senha já salvas são mantidas.
+
 #### O que acontece ao rodar
 
-Ele mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`). Depois pede a senha do pfSense duas vezes e faz sozinho:
+Ele mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`). Se você não passou `-Port`, pergunta a **porta da WebGUI**, mostrando o padrão `[443]` (veja [Porta da WebGUI](#porta-da-webgui)). Depois pede a senha do pfSense duas vezes e faz sozinho:
 
 - cria `C:\pfSense-Backup` e copia os scripts para lá;
 - tranca as permissões (só SYSTEM e Administradores, por SID, então funciona em Windows em português);
@@ -250,7 +285,7 @@ Ele mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`
 | Parâmetro | Padrão | Para que serve |
 |---|---|---|
 | `-User nome` | `srvbackup-pfsense` | usuário dedicado do pfSense (`admin`/`root` são recusados) |
-| `-Port 10443` | `443` | porta HTTPS da WebGUI |
+| `-Port 11443` | `443` (pergunta se faltar) | porta HTTPS da WebGUI. Sem ela, o instalador pergunta mostrando o padrão ([detalhes](#porta-da-webgui)) |
 | `-GroupName NOME` | `BACKUP-PFSENSE` | nome do grupo mostrado nas instruções |
 | `-Time 03:30` | `02:00` | horário da tarefa diária |
 | `-KeepDays 180` | `90` | idade máxima dos backups |
@@ -260,7 +295,7 @@ Ele mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`
 | `-CopyTo \\NAS01\Backups\pfSense` | vazio | copia cada backup validado para `<CopyTo>\<Nome>\`, com a mesma retenção (veja [Cópia fora do servidor](#cópia-fora-do-servidor)). `-CopyTo ''` desliga |
 | `-TrustNewCert` | — | aceita um certificado da WebGUI diferente do fixado (depois de uma renovação legítima) |
 | `-BaseDir D:\Backups\pfSense` | `C:\pfSense-Backup` | pasta de instalação (sem espaços) |
-| `-Yes` | — | não pergunta se o pré-requisito já foi feito nem pede para confirmar o certificado (útil em automação) |
+| `-Yes` | — | não pergunta nada: pré-requisito, porta (usa a salva, ou 443) e confirmação do certificado (útil em automação) |
 | `-NoTest` | — | pula a verificação do usuário e o backup de teste (não recomendado) |
 
 > Na verificação, o pfSense registra no log de sistema linhas como *"srvbackup-pfsense attempted to access system_usermanager.php but does not have access"*. Isso é **esperado**: é o teste confirmando que o usuário não tem acesso. Só acontece na instalação, não no backup diário.
@@ -332,7 +367,7 @@ Anote em local interno (não neste repositório público): cliente, servidor, pe
 | Listar tarefas | `schtasks /Query /FO TABLE \| findstr /I "pfSense"` |
 | Trocar a senha do pfSense | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -UpdatePassword` |
 | Mudar horário ou retenção | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -Time 04:00 -KeepDays 180` |
-| Mudar IP ou porta | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -FwHost 10.0.0.1 -Port 8443` |
+| Mudar IP ou porta | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -FwHost 10.0.0.1 -Port 11443` (ou rode só com `-Name` e digite a porta nova quando ele perguntar) |
 | Adicionar outro firewall no mesmo servidor | rodar o instalador com outro `-Name` |
 | Ligar a cópia para fora do servidor | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -Encrypt -CopyTo \\NAS01\Backups\pfSense` |
 | Aceitar o certificado novo do pfSense (renovado) | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -TrustNewCert` |

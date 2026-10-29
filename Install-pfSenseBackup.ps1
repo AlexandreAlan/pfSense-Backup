@@ -40,6 +40,10 @@
 
 .PARAMETER Port
     Porta HTTPS da WebGUI (System > Advanced > Admin Access). Padrao 443.
+    Se nao for informada, o instalador PERGUNTA, mostrando o padrao entre
+    colchetes ([443] num cadastro novo, ou a porta ja salva no perfil):
+    ENTER mantem, ou digite a porta (ex.: 11443). Informando -Port (ou -Yes),
+    nao pergunta. A porta fica salva no config\<Nome>.json.
 
 .PARAMETER User
     Usuario dedicado do pfSense, membro do grupo de backup. Padrao
@@ -278,6 +282,29 @@ if ($User -in @('admin', 'root')) {
     throw "Nao use '$User'. Crie um usuario dedicado no grupo $GroupName (veja o README, passo 2)."
 }
 
+# Porta da WebGUI: muito pfSense usa porta fora do padrao (8443, 11443...). Se a
+# porta nao veio na linha de comando (-Port), pergunta mostrando o padrao entre
+# colchetes: 443 num cadastro novo, ou a porta ja salva no perfil. ENTER mantem.
+# Com -Port ou -Yes nao pergunta nada (bom para automacao).
+if (-not $PSBoundParameters.ContainsKey('Port') -and -not $Yes) {
+    Write-Host ''
+    Write-Host '  PORTA DA WebGUI DO pfSENSE' -ForegroundColor Yellow
+    Write-Host '  --------------------------'
+    Write-Host '  E o numero depois de ":" no endereco que voce usa para abrir o pfSense'
+    Write-Host '  no navegador. Sem numero no endereco, a porta e 443.'
+    Write-Host '     https://172.16.10.1        -> 443   (so aperte ENTER)'
+    Write-Host '     https://172.16.10.1:11443  -> digite 11443'
+    Write-Host '  No pfSense: System > Advanced > Admin Access > TCP port (vazio = 443).'
+    while ($true) {
+        $r = Read-Host "  Porta HTTPS da WebGUI [$Port]"
+        if ([string]::IsNullOrWhiteSpace($r)) { break }
+        $n = 0
+        if ([int]::TryParse($r.Trim(), [ref]$n) -and $n -ge 1 -and $n -le 65535) { $Port = $n; break }
+        Warn 'porta invalida: digite so o numero, de 1 a 65535 (ou ENTER para manter).'
+    }
+    Ok "porta da WebGUI: $Port"
+}
+
 # ---------------------- 0. pre-requisito no pfSense -------------------
 if (-not $Yes -and (-not $existing -or $UpdatePassword -or $PSBoundParameters.ContainsKey('User'))) {
     Write-Host ''
@@ -361,7 +388,10 @@ $tcp = New-Object Net.Sockets.TcpClient
 try {
     $ar = $tcp.BeginConnect($FwHost, $Port, $null, $null)
     if ($ar.AsyncWaitHandle.WaitOne(5000) -and $tcp.Connected) { Ok 'porta aberta' }
-    else { Warn "sem resposta em ${FwHost}:$Port - confira IP, porta da WebGUI e regras do firewall." }
+    else {
+        Warn "sem resposta em ${FwHost}:$Port - confira IP, porta da WebGUI e regras do firewall."
+        Warn "se a WebGUI usa outra porta, rode de novo com -Port <porta> (ex.: -Port 10443)."
+    }
 } catch { Warn "falha ao conectar: $($_.Exception.Message)" }
 finally { $tcp.Close() }
 
