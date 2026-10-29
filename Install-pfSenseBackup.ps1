@@ -12,11 +12,17 @@
     Os nomes padrao ficam no bloco "PADROES" do param() abaixo - mude ali
     ou passe por parametro (-User, -GroupName...).
 
+    Antes de tudo, identifica o Windows (nome, build, 32/64 bits) e avisa se
+    ele traz o curl.exe de fabrica (build 17134+: Windows 10 1803 / Server 2019)
+    ou se vai ser preciso baixar (Server 2016 / 2012 R2 - so com sua concordancia).
+
     Faz, de uma vez, todo o setup de um perfil novo:
       1. cria a estrutura em <BaseDir> (config, secrets, backups, logs)
       2. trava as permissoes da pasta (so SYSTEM + Administradores, por SID,
          funciona em Windows em portugues ou ingles); o conteudo herda
       3. copia o Backup-pfSense.ps1 para <BaseDir> (se rodado de outra pasta)
+      .  confere o curl.exe; se faltar (Server 2016/2012 R2), explica e, com a
+         sua concordancia, baixa o curl oficial para <BaseDir>\bin\curl.exe
       4. gera a chave AES do perfil e grava a senha do pfSense cifrada
       5. testa a porta da WebGUI e FIXA a chave do certificado (pinning): dai
          em diante o backup recusa conversar com qualquer outro equipamento
@@ -54,7 +60,9 @@
     a verificacao e feita pelo efeito do privilegio). Padrao BACKUP-PFSENSE.
 
 .PARAMETER Yes
-    Nao pergunta se o pre-requisito do pfSense ja foi feito.
+    Nao pergunta nada (automacao): assume que o pre-requisito do pfSense foi
+    feito, usa a porta salva (ou 443), aceita o certificado da WebGUI no
+    primeiro cadastro e AUTORIZA baixar o curl oficial se ele faltar.
 
 .PARAMETER Time
     Horario diario da tarefa (HH:mm). Padrao 02:00.
@@ -85,9 +93,9 @@
 .PARAMETER CurlPath
     Caminho do curl.exe. Normalmente nao precisa: o instalador procura em
     C:\Windows\System32\curl.exe (Windows 10 1803+ / Server 2019+), em
-    <BaseDir>\bin\curl.exe e no PATH. No Server 2016/2012 R2, que nao trazem
-    o curl, copie o curl oficial (https://curl.se/windows/) para
-    <BaseDir>\bin\curl.exe ou informe o caminho aqui.
+    <BaseDir>\bin\curl.exe e no PATH. Se nao achar (Server 2016/2012 R2), ele
+    EXPLICA e PERGUNTA se pode baixar o curl oficial de https://curl.se/windows/
+    para <BaseDir>\bin\curl.exe. Nada e instalado no Windows: e so esse arquivo.
 
 .PARAMETER TrustNewCert
     Aceita um certificado da WebGUI diferente do fixado no cadastro. Use so
@@ -274,6 +282,25 @@ if ($Uninstall) {
     return
 }
 
+# ------------------------ sistema operacional -------------------------
+# Primeira coisa: identificar o Windows, pra ja dizer se vai ser preciso baixar
+# algo. O curl.exe vem de fabrica a partir do build 17134 (Windows 10 1803 e
+# Server 2019, build 17763); o Server 2016 (build 14393) e o 2012 R2 nao trazem.
+Step 'Sistema operacional'
+$CurlDesdeBuild = 17134
+$osBuild = [Environment]::OSVersion.Version.Build
+$osNome  = 'Windows'
+try { $osNome = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption.Trim() } catch {}
+$osBits  = if ([Environment]::Is64BitOperatingSystem) { '64 bits' } else { '32 bits' }
+$osTemCurl = $osBuild -ge $CurlDesdeBuild
+Ok "$osNome (build $osBuild, $osBits) - PowerShell $($PSVersionTable.PSVersion)"
+if ($osTemCurl) {
+    Ok 'esta versao do Windows ja traz o curl.exe: nada precisa ser baixado.'
+} else {
+    Warn "esta versao do Windows NAO traz o curl.exe (ele so vem a partir do build $CurlDesdeBuild: Windows 10 1803 / Server 2019)."
+    Warn 'o instalador vai procurar um curl ja existente; se nao achar, explica e PERGUNTA antes de baixar o curl oficial.'
+}
+
 # Em re-execucao sem -FwHost/-User, reaproveita o JSON existente
 $existing = $null
 if (Test-Path $CfgFile) { $existing = Get-Content $CfgFile -Raw | ConvertFrom-Json }
@@ -374,7 +401,9 @@ if (-not (Test-Path $Engine)) { throw "motor nao encontrado em $Engine." }
 
 # ------------------------------ curl.exe ------------------------------
 # Verificado ANTES de pedir senha: sem curl nada funciona. Windows 10 1803+ e
-# Server 2019+ ja trazem o curl.exe; Server 2016/2012 R2 nao.
+# Server 2019+ ja trazem o curl.exe; Server 2016/2012 R2 nao. Nesse caso o
+# instalador oferece baixar o curl OFICIAL (curl.se) - explicando o que, de onde,
+# por que e onde fica - e so baixa se a pessoa concordar (ou com -Yes).
 Step 'curl.exe'
 $curlSys = Join-Path $env:SystemRoot 'System32\curl.exe'
 $curlBin = Join-Path $BaseDir 'bin\curl.exe'
@@ -387,11 +416,68 @@ $noPath = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyCon
 if ($noPath) { $candidatos += $noPath.Path }
 $curl = $null
 foreach ($c in $candidatos) { if ($c -and (Test-Path $c)) { $curl = $c; break } }
+
 if (-not $curl) {
-    throw ("curl.exe nao encontrado. Este Windows nao traz o curl (ele so vem de fabrica no Windows 10 1803+ e no Server 2019+).`n" +
-           "    1. Baixe o curl oficial para Windows (64-bit): https://curl.se/windows/`n" +
-           "    2. Do ZIP, copie o arquivo bin\curl.exe para $curlBin`n" +
-           "    3. Rode este instalador de novo (ou informe -CurlPath <caminho do curl.exe>).")
+    $pacote  = if ([Environment]::Is64BitOperatingSystem) { 'win64-mingw' } else { 'win32-mingw' }
+    $urlCurl = "https://curl.se/windows/latest.cgi?p=$pacote.zip"
+    $manual  = ("Para colocar o curl na mao:`n" +
+                "    1. Num PC com internet, baixe o curl oficial para Windows: https://curl.se/windows/`n" +
+                "    2. Do ZIP, copie o arquivo bin\curl.exe para $curlBin`n" +
+                "    3. Rode este instalador de novo (ou informe -CurlPath <caminho do curl.exe>).")
+    Write-Host ''
+    Write-Host '  O curl.exe NAO foi encontrado neste servidor' -ForegroundColor Yellow
+    Write-Host '  ---------------------------------------------'
+    Write-Host '  O QUE E:     o curl, ferramenta de linha de comando open source (https://curl.se),'
+    Write-Host '               a mesma que ja vem no Windows 10 1803+ e no Server 2019+.'
+    Write-Host '  POR QUE:     o backup usa o curl para entrar na WebGUI do pfSense e baixar o'
+    if ($osTemCurl) {
+        Write-Host "               config.xml. Este $osNome (build $osBuild) deveria trazer o curl,"
+        Write-Host "               mas ele nao esta em $curlSys (removido?)."
+    } else {
+        Write-Host "               config.xml. Este $osNome (build $osBuild) nao traz o curl de fabrica."
+    }
+    Write-Host '  DE ONDE:     site oficial do projeto, por HTTPS (certificado verificado):'
+    Write-Host "               $urlCurl"
+    Write-Host "  ONDE FICA:   so o arquivo curl.exe, em $curlBin"
+    Write-Host '  O QUE NAO E FEITO: nada e instalado no Windows - sem instalador, sem PATH, sem'
+    Write-Host '               registro, sem servico. Para remover, basta apagar a pasta bin.'
+    Write-Host ''
+    if ($Yes) {
+        Ok 'download autorizado por -Yes'
+    } else {
+        $ans = Read-Host '  Baixar o curl oficial agora e colocar nessa pasta? (S/N)'
+        if ($ans -notmatch '^[sSyY]') { throw "Instalacao cancelada: o curl e obrigatorio.`n    $manual" }
+    }
+
+    $tmpZip = Join-Path $env:TEMP ("curl_" + [guid]::NewGuid().ToString('N') + '.zip')
+    try {
+        # O Windows PowerShell 5.1 no Server 2016 nao liga o TLS 1.2 sozinho, e o curl.se exige.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Write-Host "    baixando $urlCurl ..."
+        # Sem a barra de progresso: no PS 5.1 ela deixa o download dezenas de vezes mais lento.
+        $progAntes = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+        try { Invoke-WebRequest -Uri $urlCurl -OutFile $tmpZip -UseBasicParsing }
+        catch { throw "nao consegui baixar o curl ($($_.Exception.Message)). O servidor tem acesso a internet / proxy?`n    $manual" }
+        finally { $ProgressPreference = $progAntes }
+
+        # Extrai SO o bin\curl.exe do ZIP (sem Expand-Archive: nao existe no PowerShell 4).
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead($tmpZip)
+        try {
+            $entrada = $zip.Entries | Where-Object { $_.FullName -match '(^|/)bin/curl\.exe$' } | Select-Object -First 1
+            if (-not $entrada) { throw "o ZIP baixado nao tem bin/curl.exe (o site mudou o formato?).`n    $manual" }
+            $pastaBin = Split-Path $curlBin -Parent
+            if (-not (Test-Path $pastaBin)) { New-Item -ItemType Directory -Force $pastaBin | Out-Null }
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entrada, $curlBin, $true)
+            Ok "extraido do ZIP: $($entrada.FullName)"
+        } finally { $zip.Dispose() }
+        $hashCurl = (Get-FileHash $curlBin -Algorithm SHA256).Hash
+        Ok "curl colocado em $curlBin"
+        Ok "SHA-256 do curl.exe: $hashCurl (anote, se quiser auditar depois)"
+    } finally {
+        Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue
+    }
+    $curl = $curlBin
 }
 $verCurl = [string](& $curl --version | Select-Object -First 1)
 $mv = [regex]::Match($verCurl, '^curl (\d+)\.(\d+)')

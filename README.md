@@ -26,7 +26,7 @@ Para quem só quer fazer funcionar. O passo a passo detalhado está [mais abaixo
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-pfSenseBackup.ps1 -Name FWCLIENTE -FwHost 192.168.1.1
 ```
 
-**3. Responda `S`** quando ele perguntar do pré-requisito, confirme a **porta da WebGUI** (aperte ENTER se for 443, ou digite a porta, ex.: `11443`) e **digite a senha** do usuário do pfSense duas vezes.
+**3. Responda `S`** quando ele perguntar do pré-requisito (e, no Server 2016, se ele pedir para baixar o curl — ele explica antes o que vai fazer), confirme a **porta da WebGUI** (aperte ENTER se for 443, ou digite a porta, ex.: `11443`) e **digite a senha** do usuário do pfSense duas vezes.
 
 Pronto. Ele confere tudo, cria a tarefa diária e faz o primeiro backup. Se algo estiver errado, ele **para e diz o que corrigir**.
 
@@ -38,6 +38,8 @@ Pronto. Ele confere tudo, cria a tarefa diária e faz o primeiro backup. Se algo
 
 1. [Como funciona](#como-funciona)
 2. [Requisitos](#requisitos)
+   - [curl no Server 2016 e anteriores](#curl-no-server-2016-e-anteriores)
+   - [O que o instalador faz no seu servidor](#o-que-o-instalador-faz-no-seu-servidor)
 3. [Cadastrar um firewall novo (passo a passo)](#cadastrar-um-firewall-novo-passo-a-passo)
    - [Personalizar os nomes padrão](#personalizar-os-nomes-padrão)
 4. [Operação do dia a dia](#operação-do-dia-a-dia)
@@ -101,13 +103,87 @@ C:\pfSense-Backup\
 
 ## Requisitos
 
-| Item | Detalhe |
-|---|---|
-| Windows | Server 2016+ ou Windows 10+ (Server 2012 R2 funciona com WMF 4/5 e `CurlPath`) |
-| PowerShell | **Windows PowerShell 4.0 a 5.1** (`powershell.exe`). O PowerShell 7 (`pwsh`) não é suportado. |
-| curl.exe | Já vem no Windows 10 1803+ e Server 2019+. No **Server 2016 / 2012 R2** não vem: veja [curl no Server 2016](#curl-no-windows-server-2016-e-anteriores). Precisa ser o curl **7.44 ou mais novo** (o instalador confere). |
-| Rede | O servidor precisa alcançar a WebGUI do pfSense (IP da LAN + porta HTTPS). |
-| pfSense | 2.4 ou mais novo (testado na lógica do 2.7.0). Precisa de um usuário com o privilégio de backup (ver abaixo). No **CE 2.8 / Plus 24.x‑25.x**, o formulário de backup ganhou campos novos: confira o primeiro backup de cada cliente nessas versões (o instalador já faz um backup de teste). |
+### O que é preciso
+
+| Item | O que precisa | Quem providencia |
+|---|---|---|
+| **Windows** | Windows Server 2016+ ou Windows 10+. O Server 2012 R2 funciona com o WMF 4/5 instalado. Pode ser o Controlador de Domínio. | você |
+| **PowerShell** | **Windows PowerShell 4.0 a 5.1** (`powershell.exe`), que já vem no Windows. O PowerShell 7 (`pwsh`) não é suportado. | já vem no Windows |
+| **Administrador** | Abrir o PowerShell **como Administrador** para rodar o instalador. | você |
+| **curl.exe 7.44+** | Já vem no Windows 10 1803+ e no Server 2019+. No **Server 2016 / 2012 R2**, o instalador **oferece baixar** o curl oficial, explicando antes ([detalhes](#curl-no-server-2016-e-anteriores)). | o Windows, ou o instalador com a sua autorização |
+| **Rede até o pfSense** | O servidor precisa alcançar a WebGUI do pfSense (IP da LAN + porta HTTPS, ex.: `172.16.10.1:10443`). | você (regra de firewall, se for outra rede) |
+| **Internet** | **Só** se o curl precisar ser baixado, e só durante a instalação, para `https://curl.se`. O backup diário não usa internet. | — |
+| **pfSense 2.4+** | Testado na lógica do 2.7.0. No **CE 2.8 / Plus 24.x‑25.x**, o formulário de backup ganhou campos novos: confira o primeiro backup de cada cliente (o instalador já faz um backup de teste). | — |
+| **Grupo e usuário no pfSense** | Grupo `BACKUP-PFSENSE` só com `WebCfg - Diagnostics: Backup & Restore` e usuário `srvbackup-pfsense` só nesse grupo ([passo 2](#passo-2-criar-o-grupo-e-o-usuário-de-backup-no-pfsense-obrigatório)). | você, no pfSense |
+
+### curl no Server 2016 e anteriores
+
+O backup usa o **curl** (ferramenta open source, https://curl.se) para entrar na WebGUI do pfSense e baixar o `config.xml`. Ele já vem no Windows 10 1803+ e no Server 2019+, mas **não** no Server 2016 nem no 2012 R2.
+
+A **primeira coisa** que o instalador faz é identificar o Windows e dizer se vai ser preciso baixar algo:
+
+```
+==> Sistema operacional
+    OK  Microsoft Windows Server 2016 Standard (build 14393, 64 bits) - PowerShell 5.1.14393.693
+    !!  esta versao do Windows NAO traz o curl.exe (ele so vem a partir do build 17134: Windows 10 1803 / Server 2019).
+    !!  o instalador vai procurar um curl ja existente; se nao achar, explica e PERGUNTA antes de baixar o curl oficial.
+```
+
+| Windows detectado | Build | curl de fábrica? | O que o instalador faz |
+|---|---|---|---|
+| Windows 10 1803+ / Windows 11 | 17134+ | ✅ sim | Usa o curl do Windows, nada é baixado |
+| Windows Server 2019 / 2022 / 2025 | 17763+ | ✅ sim | Usa o curl do Windows, nada é baixado |
+| Windows Server 2016 | 14393 | ❌ não | Procura um curl já colocado (`bin\curl.exe`, `PATH`); se não achar, explica e pergunta antes de baixar |
+| Windows Server 2012 R2 | 9600 | ❌ não | Igual ao Server 2016 (precisa do WMF 4/5) |
+
+Quando o instalador não acha o curl, ele **para antes de pedir qualquer senha**, mostra o que vai fazer e **pergunta se você concorda**:
+
+```
+  O curl.exe NAO foi encontrado neste servidor
+  ---------------------------------------------
+  O QUE E:     o curl, ferramenta de linha de comando open source (https://curl.se),
+               a mesma que ja vem no Windows 10 1803+ e no Server 2019+.
+  POR QUE:     o backup usa o curl para entrar na WebGUI do pfSense e baixar o
+               config.xml. Este Windows nao traz o curl de fabrica.
+  DE ONDE:     site oficial do projeto, por HTTPS (certificado verificado):
+               https://curl.se/windows/latest.cgi?p=win64-mingw.zip
+  ONDE FICA:   so o arquivo curl.exe, em C:\pfSense-Backup\bin\curl.exe
+  O QUE NAO E FEITO: nada e instalado no Windows - sem instalador, sem PATH, sem
+               registro, sem servico. Para remover, basta apagar a pasta bin.
+
+  Baixar o curl oficial agora e colocar nessa pasta? (S/N)
+```
+
+- **Respondeu `S`:** ele baixa o ZIP oficial, extrai **só** o `bin\curl.exe` para `C:\pfSense-Backup\bin\curl.exe`, apaga o ZIP temporário e mostra o **SHA‑256** do `curl.exe` (anote, se quiser auditar depois). Em seguida confere se a versão é 7.44 ou mais nova e continua a instalação.
+- **Respondeu `N`:** a instalação para e mostra como colocar o curl na mão.
+- **Com `-Yes`** (automação): o download é autorizado sem perguntar.
+
+**Sem internet no servidor?** Faça na mão:
+
+1. Num PC com internet, baixe o **curl para Windows** em https://curl.se/windows/ (64-bit) e extraia o ZIP.
+2. Copie o arquivo **`bin\curl.exe`** do ZIP para o servidor, em `C:\pfSense-Backup\bin\curl.exe`.
+3. Rode o instalador de novo.
+
+O instalador e o backup procuram o curl nesta ordem: `-CurlPath` (ou `CurlPath` no JSON) › `C:\Windows\System32\curl.exe` › `C:\pfSense-Backup\bin\curl.exe` › `PATH`. Para usar um curl em outra pasta: `-CurlPath C:\caminho\curl.exe`.
+
+### O que o instalador faz no seu servidor
+
+Tudo o que ele cria, altera ou baixa, e como desfazer:
+
+| O quê | Onde | Por quê | Como desfazer |
+|---|---|---|---|
+| Cria a pasta do backup | `C:\pfSense-Backup` (ou `-BaseDir`) | Guardar scripts, configuração, senha cifrada, backups e logs | Apagar a pasta (perde os backups) |
+| Restringe as permissões dessa pasta | ACL da pasta: só `SYSTEM` e `Administradores`; o conteúdo herda | A pasta guarda a senha cifrada e o `config.xml`, que tem segredos do firewall | `icacls C:\pfSense-Backup /reset /T` |
+| Copia os dois scripts | `C:\pfSense-Backup\*.ps1` | A tarefa diária roda a cópia de dentro da pasta protegida | Apagar a pasta |
+| **Baixa o curl, só se faltar e só se você concordar** | `C:\pfSense-Backup\bin\curl.exe` | O Server 2016/2012 R2 não traz o curl | Apagar a pasta `bin` |
+| Gera a chave e grava a senha cifrada | `secrets\<Nome>.key` e `secrets\<Nome>.pass` | A tarefa roda como `SYSTEM` sem pedir senha | `-Uninstall` |
+| Grava a configuração do perfil | `config\<Nome>.json` | Host, porta, usuário, retenção, certificado fixado | `-Uninstall` |
+| Registra a origem de eventos | Log de Aplicativo, origem `pfSense-Backup` | Avisar sucesso/erro para o monitoramento (IDs 1000/1001/1002) | `Remove-EventLog -Source pfSense-Backup` |
+| Cria a tarefa agendada | Agendador: `pfSense Backup - <Nome>`, diária, como `SYSTEM` | Rodar o backup todo dia sozinho | `-Uninstall` |
+| Identifica o Windows | só leitura (`Win32_OperatingSystem`) | Saber se o curl vem de fábrica ou se vai ser preciso baixar | — |
+| Conecta no pfSense | WebGUI (HTTPS) | Ler o certificado, verificar o usuário e fazer o backup de teste | — |
+
+O instalador **não** instala programas, **não** mexe no `PATH`, **não** abre portas no firewall do Windows, **não** cria usuários no Windows e **não** altera nada no pfSense. O `-Uninstall` remove a tarefa, o JSON e os segredos do perfil e **mantém os backups**.
 
 ---
 
@@ -181,16 +257,6 @@ Test-NetConnection 192.168.1.1 -Port 443
 ```
 
 ### Passo 4: copiar os scripts para o servidor
-
-#### curl no Windows Server 2016 e anteriores
-
-O Server 2016 e o 2012 R2 **não trazem o `curl.exe`**. O instalador confere isso logo no começo, antes de pedir senha, e para com estas instruções se não achar:
-
-1. Baixe o **curl oficial para Windows** (64-bit) em https://curl.se/windows/ e extraia o ZIP.
-2. Crie a pasta `C:\pfSense-Backup\bin` e copie para ela o arquivo **`bin\curl.exe`** do ZIP. O resultado é `C:\pfSense-Backup\bin\curl.exe`.
-3. Rode o instalador de novo.
-
-O instalador e o backup procuram o curl nesta ordem: `-CurlPath` (ou `CurlPath` no JSON) › `C:\Windows\System32\curl.exe` › `C:\pfSense-Backup\bin\curl.exe` › `PATH`. Se você preferir deixar o curl em outra pasta, use `-CurlPath C:\caminho\curl.exe`.
 
 Copie `Backup-pfSense.ps1` e `Install-pfSenseBackup.ps1` para qualquer pasta do servidor, por exemplo a Área de Trabalho ou um `git clone` deste repositório.
 
@@ -279,7 +345,7 @@ A porta fica gravada em `config\<Nome>.json` e é usada todo dia pelo backup. Se
 
 #### O que acontece ao rodar
 
-Ele mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`). Se você não passou `-Port`, pergunta a **porta da WebGUI**, mostrando o padrão `[443]` (veja [Porta da WebGUI](#porta-da-webgui)). Depois pede a senha do pfSense duas vezes e faz sozinho:
+Primeiro ele **identifica o Windows** e diz se vai ser preciso baixar o curl ([detalhes](#curl-no-server-2016-e-anteriores)). Depois mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`). Se você não passou `-Port`, pergunta a **porta da WebGUI**, mostrando o padrão `[443]` (veja [Porta da WebGUI](#porta-da-webgui)). Depois pede a senha do pfSense duas vezes e faz sozinho:
 
 - cria `C:\pfSense-Backup` e tranca as permissões: só SYSTEM e Administradores, por SID, então funciona em Windows em português. A permissão vai na pasta, e tudo dentro dela herda;
 - copia os scripts para lá;
@@ -306,8 +372,8 @@ Ele mostra o pré-requisito do passo 2 e pergunta se já foi feito (responda `S`
 | `-CopyTo \\NAS01\Backups\pfSense` | vazio | copia cada backup validado para `<CopyTo>\<Nome>\`, com a mesma retenção (veja [Cópia fora do servidor](#cópia-fora-do-servidor)). `-CopyTo ''` desliga |
 | `-TrustNewCert` | — | aceita um certificado da WebGUI diferente do fixado (depois de uma renovação legítima) |
 | `-BaseDir D:\Backups\pfSense` | `C:\pfSense-Backup` | pasta de instalação (sem espaços) |
-| `-CurlPath C:\tools\curl.exe` | procura sozinho | caminho do `curl.exe`, se ele não estiver no Windows nem em `<BaseDir>\bin\curl.exe` ([detalhes](#curl-no-windows-server-2016-e-anteriores)) |
-| `-Yes` | — | não pergunta nada: pré-requisito, porta (usa a salva, ou 443) e confirmação do certificado (útil em automação) |
+| `-CurlPath C:\tools\curl.exe` | procura sozinho | caminho do `curl.exe`, se ele não estiver no Windows nem em `<BaseDir>\bin\curl.exe` ([detalhes](#curl-no-server-2016-e-anteriores)) |
+| `-Yes` | — | não pergunta nada: pré-requisito, porta (usa a salva, ou 443), confirmação do certificado e **autoriza baixar o curl** se ele faltar (útil em automação) |
 | `-NoTest` | — | pula a verificação do usuário e o backup de teste (não recomendado) |
 
 > Na verificação, o pfSense registra no log de sistema linhas como *"srvbackup-pfsense attempted to access system_usermanager.php but does not have access"*. Isso é **esperado**: é o teste confirmando que o usuário não tem acesso. Só acontece na instalação, não no backup diário.
@@ -463,7 +529,8 @@ Get-EventLog -LogName Application -Source pfSense-Backup -Newest 10
 | `Verificacao REPROVADA - a tarefa NAO foi criada` | Uma das linhas acima | Ler a mensagem logo acima dela, corrigir no pfSense e rodar o instalador de novo |
 | `XML invalido/incompleto` | Download cortado (rede) | Já é repetido sozinho. Se continuar, aumentar `MaxTime` (e/ou `ConnectTimeout`) no JSON |
 | `arquivo pequeno demais` | O pfSense devolveu uma página de erro em vez do XML | Ver o "Inicio:" na mensagem; normalmente é login ou privilégio |
-| `curl.exe nao encontrado` | Server 2016 / 2012 R2, que não trazem o curl | Copiar o curl oficial para `C:\pfSense-Backup\bin\curl.exe` e rodar o instalador de novo ([passo a passo](#curl-no-windows-server-2016-e-anteriores)) |
+| `curl.exe nao encontrado` | Server 2016 / 2012 R2, que não trazem o curl | Rodar o instalador e responder `S` quando ele oferecer baixar o curl, ou colocar na mão em `C:\pfSense-Backup\bin\curl.exe` ([passo a passo](#curl-no-server-2016-e-anteriores)) |
+| `nao consegui baixar o curl` | Servidor sem internet, proxy ou TLS bloqueado | Colocar o curl na mão ([passo a passo](#curl-no-server-2016-e-anteriores)) |
 | `... e o curl 7.xx: antigo demais` | Curl sem suporte a fixar o certificado | Baixar o curl atual em https://curl.se/windows/ |
 | `Key not valid for use in specified state` | Chave e senha não combinam (arquivo trocado ou copiado de outro servidor) | Rodar `-UpdatePassword` |
 | Funciona no teste manual mas não na tarefa | Diferença de permissão ou ACL | Rodar o instalador de novo (reaplica a ACL); ver o histórico da tarefa no Agendador |
