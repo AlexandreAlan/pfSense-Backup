@@ -171,6 +171,7 @@ $forced = Join-Path $sw 'forced.sh'
 [IO.File]::WriteAllText($forced, (New-ForcedCommand $root), $enc)
 $env:FAKE_FORCED = $forced
 $script:Ssh = Join-Path $PSScriptRoot 'fake_ssh.sh'
+$script:SshRoot = $root
 $cfg = [pscustomobject]@{ User = 'srvbackup-pfsense'; Host = '127.0.0.1'; LightSquidUrl = '' }
 $transport = 'ssh'; $sshPort = 22; $sshUser = 'srvbackup-pfsense'; $timeout = 5; $keepDays = 400
 $sources = $SshDefaultSources
@@ -178,8 +179,8 @@ New-Item -ItemType Directory -Force $StateDir, $LogDir | Out-Null
 function ArqSsh([string]$Cat) { $d = Get-Date; return (Join-Path $sw "logs-pfsense/SSHT/$Cat/$($d.ToString('yyyy'))/$($d.ToString('MM'))/$($d.ToString('yyyy-MM-dd')).log") }
 
 Cenario 'a trava recusa tudo que nao for list/get/sig dos logs' {
-    $tentativas = @('id', 'list x', 'get /etc/passwd 0', "get $root/var/log/../../../etc/passwd 0", "get $root/var/log/system.log 0;id",
-                    "get $root/var/log/system.log abc", "sig /etc/passwd", 'get', "get $root/var/log/nginx.log 0")
+    $tentativas = @('id', 'list x', 'get /etc/passwd 0', 'get /var/log/../../../etc/passwd 0', 'get /var/log/system.log 0;id',
+                    'get /var/log/system.log abc', 'sig /etc/passwd', 'get', 'get /var/log/nginx.log 0')
     foreach ($t in $tentativas) {
         $r = Invoke-Ssh ($t -split ' ') $TmpFile
         $out = Read-Text $TmpFile
@@ -196,8 +197,9 @@ Cenario '-CheckOnly: encontra as fontes e confirma que a chave esta travada' {
 }
 Cenario '-CheckOnly reprova uma chave SEM trava' {
     [IO.File]::WriteAllText($forced, '/bin/sh -c "$SSH_ORIGINAL_COMMAND"', $enc)
-    try { Invoke-LogCollection | Out-Null; throw 'deveria reprovar' } catch { if ($_.Exception.Message -notmatch 'NAO esta travada') { throw $_ } }
-    [IO.File]::WriteAllText($forced, (New-ForcedCommand $root), $enc); $script:NoRetry = $false
+    try {
+        try { Invoke-LogCollection | Out-Null; throw 'deveria reprovar' } catch { if ($_.Exception.Message -notmatch 'NAO esta travada') { throw $_ } }
+    } finally { [IO.File]::WriteAllText($forced, (New-ForcedCommand $root), $enc); $script:NoRetry = $false }
     '(reprovada)'
 }
 $CheckOnly = $false
@@ -249,8 +251,9 @@ Cenario 'arquivo reescrito no lugar (pfBlockerNG) nao duplica' {
 }
 Cenario 'linha da chave para o pfSense: travas e aspas escapadas' {
     $l = Get-AuthorizedKeyLine 'ssh-ed25519 AAAAC3NzaTESTE pfSense-Backup' '172.16.10.7'
-    if ($l -notmatch '^restrict,from="172\.16\.10\.7",command="/bin/sh -c ''.*'' ssh-ed25519 AAAAC3NzaTESTE pfSense-Backup$') { throw "formato: $l" }
-    if ($l -match '[^\\]"[^ ]*\$1') { throw 'aspas do comando nao escapadas' }
+    if ($l -notmatch '^restrict,from="172\.16\.10\.7",command="/bin/sh -c ''.*''" ssh-ed25519 AAAAC3NzaTESTE pfSense-Backup$') { throw "formato: $l" }
+    $soltas = ([regex]::Matches(($l -replace '\\"', ''), '"')).Count
+    if ($soltas -ne 4) { throw "aspas sem escape dentro do command: $soltas (esperado 4: from e command)" }
     "($($l.Length) caracteres)"
 }
 

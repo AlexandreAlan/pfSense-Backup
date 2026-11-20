@@ -193,6 +193,7 @@ $TmpFile   = Join-Path $SecDir  ("logs_" + [guid]::NewGuid().ToString('N') + '.t
 $CookieJar = Join-Path $SecDir  ("cookies_" + [guid]::NewGuid().ToString('N') + '.tmp')
 
 $script:NoRetry  = $false
+$script:SshRoot  = ''   # so nos testes: pasta que faz o papel da raiz do pfSense
 $script:Csrf     = ''
 $script:Warnings = New-Object System.Collections.ArrayList
 $script:Counts   = [ordered]@{}
@@ -705,7 +706,7 @@ function Invoke-Ssh([string[]]$Remote, [string]$OutFile) {
     $a = @('-i', $SshKeyFile, '-p', "$sshPort", '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
            '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$KnownHosts", '-o', 'GlobalKnownHostsFile=none',
            '-o', "ConnectTimeout=$timeout", '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
-           '-o', 'LogLevel=ERROR', "$sshUser@$($cfg.Host)") + $Remote
+           '-o', 'LogLevel=ERROR', "$sshUser@$($cfg.Host)") + @($Remote | ForEach-Object { if ($script:SshRoot -and "$_".StartsWith('/')) { $script:SshRoot + $_ } else { $_ } })
     $p = Start-Process -FilePath $script:Ssh -ArgumentList $a -NoNewWindow -Wait -PassThru `
         -RedirectStandardOutput $OutFile -RedirectStandardError $err
     $e = (Read-Text $err).Trim()
@@ -728,7 +729,11 @@ function Get-SshList {
     $out = @()
     foreach ($l in ((Read-Text $TmpFile) -split "`r?`n")) {
         $m = [regex]::Match($l, '^(\d+) (\S+) (/\S+)$')
-        if ($m.Success) { $out += [pscustomobject]@{ Size = [int64]$m.Groups[1].Value; Sig = $m.Groups[2].Value; Path = $m.Groups[3].Value } }
+        if ($m.Success) {
+            $pth = $m.Groups[3].Value
+            if ($script:SshRoot -and $pth.StartsWith($script:SshRoot)) { $pth = $pth.Substring($script:SshRoot.Length) }
+            $out += [pscustomobject]@{ Size = [int64]$m.Groups[1].Value; Sig = $m.Groups[2].Value; Path = $pth }
+        }
     }
     return , $out
 }
@@ -973,7 +978,13 @@ function Collect-Ssh {
 }
 
 function Test-SshAccess {
-    # Modo -CheckOnly com SSH: a chave entra, lista os logs e NAO executa outro comando.
+    # Modo -CheckOnly com SSH: primeiro confere que a chave NAO executa outro comando,
+    # depois que ela lista os logs de cada fonte.
+    $r = Invoke-Ssh @('id') $TmpFile
+    if ((Read-Text $TmpFile) -match 'uid=' -or $r.Code -eq 0) {
+        Stop-Permanent "a chave SSH NAO esta travada: o pfSense executou um comando qualquer ('id'). Cole no pfSense exatamente a linha gerada pelo instalador (comeca com restrict,from=...,command=...)."
+    }
+    Write-Log '  OK      chave travada: comando fora da lista foi recusado'
     $list = Get-SshList
     $faltam = @()
     $alvo = @{ 'sistema' = '^/var/log/system\.log$'; 'autenticacao' = '^/var/log/auth\.log$'; 'portal' = '^/var/log/portalauth\.log$'
@@ -988,11 +999,6 @@ function Test-SshAccess {
         if ($n -gt 0) { Write-Log "  OK      $s ($n arquivo(s))" }
         else { Write-Log "  FALTA   $s  -> nao encontrado ou sem permissao de leitura (rode o script de permissoes no pfSense; ou o pacote nao esta instalado)"; $faltam += $s }
     }
-    $r = Invoke-Ssh @('id') $TmpFile
-    if ((Read-Text $TmpFile) -match 'uid=' -or $r.Code -eq 0) {
-        Stop-Permanent "a chave SSH NAO esta travada: o pfSense executou um comando qualquer ('id'). Cole no pfSense exatamente a linha gerada pelo instalador (comeca com restrict,from=...,command=...)."
-    }
-    Write-Log '  OK      chave travada: comando fora da lista foi recusado'
     return , $faltam
 }
 
