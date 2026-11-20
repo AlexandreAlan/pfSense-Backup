@@ -158,6 +158,7 @@ Cenario 'gera o HTML com as secoes, as mudancas e os pontos de atencao' {
              'DESATIVADO ainda no grupo de administradores', 'CA-VPN-TESTE', 'vpn-teste.exemplo', 'Impressora RH', 'Web interno',
              '203.0.113.10', 'VLAN 20 sobre igb0', 'ADMIN')
     foreach ($t in $tem) { if ($h.IndexOf($t) -lt 0) { throw "falta no HTML: '$t'" } }
+    if ($env:RUNNER_TEMP) { Copy-Item $out (Join-Path $env:RUNNER_TEMP 'auditoria-exemplo.html') }   # artefato do CI
     "($($tem.Count) conferencias)"
 }
 Cenario 'NUNCA mostra segredos' {
