@@ -6,6 +6,8 @@
 
 ```
 Backup-pfSense.ps1          motor: login na WebGUI, download, validação, retenção, status
+Logs-pfSense.ps1            (v2) coleta incremental dos logs pela WebGUI
+Relatorio-pfSense.ps1       (v2) relatório de auditoria HTML a partir do config.xml
 Install-pfSenseBackup.ps1   instalador: perguntas, segredos, pinning, verificação, tarefa
 config/EXEMPLO.json.example modelo do JSON de um perfil
 docs/                       documentação
@@ -20,6 +22,10 @@ tests/                      testes automáticos
 - **Nunca escreva `"$variavel:"`** dentro de string: o `:` faz o PowerShell ler `$drive:variavel` e o script inteiro deixa de carregar. Use `"${variavel}:"`.
 - **Nada de `$PSScriptRoot` como valor padrão no `param()`**: chega vazio em alguns Windows. Use `$MyInvocation.MyCommand.Definition`.
 - **Segredos nunca na linha de comando**: sempre por `Invoke-Curl ... $Secrets` (stdin, `-K -`).
+- **Resposta grande do curl vai para arquivo** (`-o`), nunca pelo pipe: o PS 5.1 converte a saída de exe nativo pela página de código do console e estraga os acentos.
+- **Função devolvendo lista:** o PowerShell "desembrulha" uma lista de 1 item. Quem precisa de `.Count` ou `+` usa `@(Funcao ...)`.
+- **Nada de função com nome de alias** (`h`, `r`, `gc`…): o alias vence a função.
+- **Privilégios do pfSense conferem a URL exata** (`status_logs.php` ≠ `status_logs.php?logfile=x`): parâmetros extras vão no corpo do POST.
 
 ## Testes
 
@@ -40,6 +46,16 @@ Cenários do teste funcional, com uma senha "difícil" (`"`, `\`, `$`, `:`, cras
 5. Senha errada: para na hora, sem nova tentativa.
 6. Certificado diferente: o curl recusa e a senha **não** chega no servidor.
 7. Arquivos de status: `OK` → `ERRO`, com o `ultimo-ok.txt` preservado no erro.
+
+Versão 2 (`tests/Test-Logs.ps1`, mesmo pfSense simulado, que ganhou as telas de log):
+
+8. Datas de todos os formatos de log (syslog sem ano, ISO, Suricata, Squid, pfBlockerNG) e o algoritmo que acha onde a coleta parou.
+9. `-CheckOnly` dos logs: aponta a fonte sem privilégio e não acusa administrador.
+10. Primeira coleta: cada fonte na sua pasta e dia, a planilha de visitantes (BOM, acento, CPF, voucher) e as concessões de DHCP.
+11. Coletas seguintes: nada duplica, linhas novas entram uma vez só e a lacuna vira `AVISO`.
+12. Relatório de auditoria com os `config.xml` de exemplo de `tests/fixtures/`: seções, mudanças, pontos de atenção e **nenhum segredo** no HTML.
+
+O motor de logs é carregado nos testes por *dot-source* (`. .\Logs-pfSense.ps1 -Name X`). Nesse modo o script para antes do `main`. Mantenha o `main` depois da linha que confere `$MyInvocation.InvocationName`.
 
 Rodar na mão:
 

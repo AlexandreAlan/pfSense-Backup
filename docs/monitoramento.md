@@ -42,6 +42,24 @@ A terceira trigger pega também o caso em que o backup **nem rodou** (tarefa des
 
 > O agente do Zabbix roda como `Local System` por padrão e consegue ler a pasta. Se ele rodar com outra conta, dê permissão de leitura a ela em `C:\pfSense-Backup\status`.
 
+## Coleta de logs (versão 2)
+
+A [coleta de logs](logs.md) grava os mesmos três arquivos, com o prefixo `logs-`, na mesma pasta:
+
+| Arquivo | Conteúdo |
+|---|---|
+| `logs-status.txt` | `OK`, `AVISO` (faltou privilégio de alguma fonte ou houve possível lacuna) ou `ERRO` |
+| `logs-ultimo-ok.txt` | Segundos desde 1970 (UTC) da última coleta boa |
+| `logs-mensagem.txt` | Data, quantidade de linhas novas por fonte e avisos |
+
+| Trigger | Expressão | Severidade |
+|---|---|---|
+| Coleta de logs falhou | `last(/SERVIDOR/vfs.file.contents["C:\pfSense-Backup\status\FWAGF\logs-status.txt"])="ERRO"` | Alta |
+| Coleta de logs com aviso | `last(/SERVIDOR/vfs.file.contents["C:\pfSense-Backup\status\FWAGF\logs-status.txt"])="AVISO"` | Aviso |
+| Sem coleta de logs há mais de 3 h | `now()-last(/SERVIDOR/vfs.file.contents["C:\pfSense-Backup\status\FWAGF\logs-ultimo-ok.txt"])>10800` | Média |
+
+Eventos no Log de Aplicativo (origem `pfSense-Backup`): **1010** = coleta OK, **1011** = erro, **1012** = aviso.
+
 ## Alternativa: Log de Eventos do Windows
 
 Cada execução também grava um evento no **Log de Aplicativo**, origem `pfSense-Backup`:
