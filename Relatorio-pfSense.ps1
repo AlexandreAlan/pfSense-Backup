@@ -78,7 +78,7 @@ function Get-Text($Node, [string]$Child) {
     return [string]$v
 }
 
-function H([string]$Text) { return [Net.WebUtility]::HtmlEncode($Text) }
+function Esc([string]$Text) { return [Net.WebUtility]::HtmlEncode($Text) }
 
 function Format-Endpoint($Ep) {
     # <source>/<destination> de regra: any | network | address, + port, + not.
@@ -109,7 +109,7 @@ $script:Sb = New-Object Text.StringBuilder
 function Out-Html([string]$Text) { [void]$script:Sb.Append($Text) }
 
 function Out-Table([string[]]$Headers, $Rows, [string]$Empty = 'Nenhum item.') {
-    # $Rows: lista de arrays de celulas JA em HTML (use H() no texto).
+    # $Rows: lista de arrays de celulas JA em HTML (use Esc() no texto; "H" seria o alias h = Get-History).
     $Rows = @($Rows)
     if ($Rows.Count -eq 0) { Out-Html "<p class=""vazio"">$Empty</p>"; return }
     # Uma linha so pode chegar "desembrulhada" pelo pipeline (array de textos): reembrulha.
@@ -127,7 +127,7 @@ function Out-Table([string[]]$Headers, $Rows, [string]$Empty = 'Nenhum item.') {
     Out-Html '</tbody></table>'
 }
 
-function Badge([string]$Text, [string]$Kind) { return "<span class=""b $Kind"">$(H $Text)</span>" }
+function Badge([string]$Text, [string]$Kind) { return "<span class=""b $Kind"">$(Esc $Text)</span>" }
 
 function Get-IfName($Cfg, [string]$Key) {
     if (-not $Key) { return '' }
@@ -259,7 +259,7 @@ function New-Report($Cfg, $Prev, [string]$SourceFile, [string]$PrevFile) {
 
     # --- HTML --------------------------------------------------------------
     Out-Html '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">'
-    Out-Html "<title>Auditoria $(H $host_) - $($agora.ToString('dd/MM/yyyy'))</title>"
+    Out-Html "<title>Auditoria $(Esc $host_) - $($agora.ToString('dd/MM/yyyy'))</title>"
     Out-Html @'
 <style>
 body{font-family:Segoe UI,Arial,sans-serif;margin:0;color:#1f2937;background:#f3f4f6}
@@ -287,10 +287,10 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
 @media print{nav{display:none} body{background:#fff} section{break-inside:avoid-page}}
 </style></head><body>
 '@
-    Out-Html "<header><h1>Relat&oacute;rio de auditoria do firewall &mdash; $(H $host_)</h1>"
-    Out-Html "<p>Backup analisado: $(H ([IO.Path]::GetFileName($SourceFile))) &middot; gerado em $($agora.ToString('dd/MM/yyyy HH:mm')) &middot; pfSense config v$(H (Get-Text $p 'version'))"
+    Out-Html "<header><h1>Relat&oacute;rio de auditoria do firewall &mdash; $(Esc $host_)</h1>"
+    Out-Html "<p>Backup analisado: $(Esc ([IO.Path]::GetFileName($SourceFile))) &middot; gerado em $($agora.ToString('dd/MM/yyyy HH:mm')) &middot; pfSense config v$(Esc (Get-Text $p 'version'))"
     $rev = $p.revision
-    if ($rev) { Out-Html " &middot; &uacute;ltima altera&ccedil;&atilde;o: $(H (Get-Text $rev 'description')) por $(H (Get-Text $rev 'username'))" }
+    if ($rev) { Out-Html " &middot; &uacute;ltima altera&ccedil;&atilde;o: $(Esc (Get-Text $rev 'description')) por $(Esc (Get-Text $rev 'username'))" }
     Out-Html '</p></header><main>'
     Out-Html '<nav><a href="#resumo">Resumo</a><a href="#mudancas">Mudan&ccedil;as</a><a href="#interfaces">Interfaces</a><a href="#gateways">Gateways</a><a href="#regras">Regras</a><a href="#nat">NAT</a><a href="#aliases">Aliases</a><a href="#usuarios">Usu&aacute;rios</a><a href="#vpn">OpenVPN</a><a href="#certs">Certificados</a><a href="#ipsec">IPsec</a><a href="#portal">Portal cativo</a><a href="#dhcp">DHCP</a><a href="#acesso">Acesso administrativo</a><a href="#pacotes">Pacotes</a></nav>'
 
@@ -306,14 +306,14 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
     }
     Out-Html '</div><h3>Pontos de aten&ccedil;&atilde;o</h3>'
     $ordem = @{ alto = 0; medio = 1; baixo = 2; info = 3 }
-    Out-Table @('N&iacute;vel', 'Item') @($att | Sort-Object { $ordem[$_[0]] } | ForEach-Object { , @((Badge $_[0] $_[0]), (H $_[1])) }) 'Nenhum ponto de aten&ccedil;&atilde;o encontrado automaticamente.'
+    Out-Table @('N&iacute;vel', 'Item') @($att | Sort-Object { $ordem[$_[0]] } | ForEach-Object { , @((Badge $_[0] $_[0]), (Esc $_[1])) }) 'Nenhum ponto de aten&ccedil;&atilde;o encontrado automaticamente.'
     Out-Html '</section>'
 
     # Mudancas
     Out-Html '<section id="mudancas"><h2>Mudan&ccedil;as desde o backup anterior</h2>'
     if ($PrevFile) {
-        Out-Html "<p class=""vazio"">Comparado com $(H ([IO.Path]::GetFileName($PrevFile))).</p>"
-        Out-Table @('Tipo', 'Item', 'Detalhe') @($changes | ForEach-Object { , @((H $_[0]), (H $_[1]), (H $_[2])) }) 'Nenhuma mudan&ccedil;a relevante (regras, usu&aacute;rios, grupos, aliases, VPNs, NAT, revoga&ccedil;&otilde;es).'
+        Out-Html "<p class=""vazio"">Comparado com $(Esc ([IO.Path]::GetFileName($PrevFile))).</p>"
+        Out-Table @('Tipo', 'Item', 'Detalhe') @($changes | ForEach-Object { , @((Esc $_[0]), (Esc $_[1]), (Esc $_[2])) }) 'Nenhuma mudan&ccedil;a relevante (regras, usu&aacute;rios, grupos, aliases, VPNs, NAT, revoga&ccedil;&otilde;es).'
     } else { Out-Html '<p class="vazio">Primeiro relat&oacute;rio: n&atilde;o h&aacute; backup anterior para comparar.</p>' }
     Out-Html '</section>'
 
@@ -324,7 +324,7 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
         if ($i.NodeType -ne 'Element') { continue }
         $ip = Get-Text $i 'ipaddr'; if ((Get-Text $i 'subnet')) { $ip = "$ip/$(Get-Text $i 'subnet')" }
         $st = Badge 'desativada' 'info'; if (Test-Flag $i 'enable') { $st = Badge 'ativa' 'ok' }
-        $rows += , @((H $i.LocalName), (H (Get-Text $i 'descr')), (H (Get-Text $i 'if')), (H $vlans[(Get-Text $i 'if')]), (H $ip), $st)
+        $rows += , @((Esc $i.LocalName), (Esc (Get-Text $i 'descr')), (Esc (Get-Text $i 'if')), (Esc $vlans[(Get-Text $i 'if')]), (Esc $ip), $st)
     }
     Out-Html '<section id="interfaces"><h2>Interfaces e VLANs</h2>'
     Out-Table @('Chave', 'Nome', 'Porta', 'VLAN', 'Endere&ccedil;o', 'Status') $rows
@@ -332,13 +332,13 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
 
     # Gateways
     $rows = @()
-    foreach ($g in (Get-List $p.gateways.gateway_item)) { $rows += , @((H (Get-Text $g 'name')), (H (Get-IfName $Cfg (Get-Text $g 'interface'))), (H (Get-Text $g 'gateway')), (H (Get-Text $g 'monitor')), (H (Get-Text $g 'descr'))) }
+    foreach ($g in (Get-List $p.gateways.gateway_item)) { $rows += , @((Esc (Get-Text $g 'name')), (Esc (Get-IfName $Cfg (Get-Text $g 'interface'))), (Esc (Get-Text $g 'gateway')), (Esc (Get-Text $g 'monitor')), (Esc (Get-Text $g 'descr'))) }
     Out-Html '<section id="gateways"><h2>Gateways</h2>'
     Out-Table @('Nome', 'Interface', 'Gateway', 'Monitorado', 'Descri&ccedil;&atilde;o') $rows
-    $rows = @(); foreach ($g in (Get-List $p.gateways.gateway_group)) { $rows += , @((H (Get-Text $g 'name')), (H ((Get-List $g.item) -join ', ')), (H (Get-Text $g 'descr'))) }
+    $rows = @(); foreach ($g in (Get-List $p.gateways.gateway_group)) { $rows += , @((Esc (Get-Text $g 'name')), (Esc ((Get-List $g.item) -join ', ')), (Esc (Get-Text $g 'descr'))) }
     Out-Html '<h3>Grupos de gateway (failover / balanceamento)</h3>'
     Out-Table @('Grupo', 'Membros (gateway|n&iacute;vel)', 'Descri&ccedil;&atilde;o') $rows
-    Out-Html "<p class=""vazio"">Gateway padr&atilde;o IPv4: $(H (Get-Text $p.gateways 'defaultgw4'))</p></section>"
+    Out-Html "<p class=""vazio"">Gateway padr&atilde;o IPv4: $(Esc (Get-Text $p.gateways 'defaultgw4'))</p></section>"
 
     # Regras por interface (na ordem em que o pfSense avalia)
     Out-Html '<section id="regras"><h2>Regras do firewall</h2><p class="vazio">Na ordem de avalia&ccedil;&atilde;o. Riscadas = desativadas.</p>'
@@ -350,14 +350,14 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
     }
     foreach ($k in $porIf.Keys) {
         $nome = $k; if ($k -ne '(flutuantes)') { $nome = Get-IfName $Cfg $k }
-        Out-Html "<h3>$(H $nome) &mdash; $(@($porIf[$k]).Count) regra(s)</h3>"
+        Out-Html "<h3>$(Esc $nome) &mdash; $(@($porIf[$k]).Count) regra(s)</h3>"
         $rows = @(); $n = 0
         foreach ($r in $porIf[$k]) {
             $n++
             $tipo = Get-Text $r 'type'
             $proto = Get-Text $r 'protocol'; if (-not $proto) { $proto = 'qualquer' }
             $log = ''; if (Test-Flag $r 'log') { $log = 'sim' }
-            $cells = @("$n", (Badge $tipo $tipo), (H $proto), (H (Format-Endpoint $r.source)), (H (Format-Endpoint $r.destination)), (H (Get-Text $r 'gateway')), $log, (H (Get-Text $r 'descr')), (H (Get-Text $r 'tracker')))
+            $cells = @("$n", (Badge $tipo $tipo), (Esc $proto), (Esc (Format-Endpoint $r.source)), (Esc (Format-Endpoint $r.destination)), (Esc (Get-Text $r 'gateway')), $log, (Esc (Get-Text $r 'descr')), (Esc (Get-Text $r 'tracker')))
             if (Test-Flag $r 'disabled') { $rows += @{ Class = 'off'; Cells = $cells } } else { $rows += , $cells }
         }
         Out-Table @('#', 'A&ccedil;&atilde;o', 'Protocolo', 'Origem', 'Destino', 'Gateway', 'Log', 'Descri&ccedil;&atilde;o', 'ID') $rows
@@ -368,21 +368,21 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
     Out-Html '<section id="nat"><h2>NAT</h2><h3>Redirecionamento de portas (port forward)</h3>'
     $rows = @()
     foreach ($r in (Get-List $p.nat.rule)) {
-        $cells = @((H (Get-IfName $Cfg (Get-Text $r 'interface'))), (H (Get-Text $r 'protocol')), (H (Format-Endpoint $r.source)), (H (Format-Endpoint $r.destination)), (H ("$(Get-Text $r 'target'):$(Get-Text $r 'local-port')")), (H (Get-Text $r 'descr')))
+        $cells = @((Esc (Get-IfName $Cfg (Get-Text $r 'interface'))), (Esc (Get-Text $r 'protocol')), (Esc (Format-Endpoint $r.source)), (Esc (Format-Endpoint $r.destination)), (Esc ("$(Get-Text $r 'target'):$(Get-Text $r 'local-port')")), (Esc (Get-Text $r 'descr')))
         if (Test-Flag $r 'disabled') { $rows += @{ Class = 'off'; Cells = $cells } } else { $rows += , $cells }
     }
     Out-Table @('Interface', 'Protocolo', 'Origem', 'Destino', 'Redireciona para', 'Descri&ccedil;&atilde;o') $rows 'Nenhum redirecionamento de porta.'
-    Out-Html "<h3>NAT de sa&iacute;da (modo: $(H (Get-Text $p.nat.outbound 'mode')))</h3>"
+    Out-Html "<h3>NAT de sa&iacute;da (modo: $(Esc (Get-Text $p.nat.outbound 'mode')))</h3>"
     $rows = @()
     foreach ($r in (Get-List $p.nat.outbound.rule)) {
-        $cells = @((H (Get-IfName $Cfg (Get-Text $r 'interface'))), (H (Format-Endpoint $r.source)), (H (Format-Endpoint $r.destination)), (H (Get-Text $r 'target')), (H (Get-Text $r 'descr')))
+        $cells = @((Esc (Get-IfName $Cfg (Get-Text $r 'interface'))), (Esc (Format-Endpoint $r.source)), (Esc (Format-Endpoint $r.destination)), (Esc (Get-Text $r 'target')), (Esc (Get-Text $r 'descr')))
         if (Test-Flag $r 'disabled') { $rows += @{ Class = 'off'; Cells = $cells } } else { $rows += , $cells }
     }
     Out-Table @('Interface', 'Origem', 'Destino', 'Traduz para', 'Descri&ccedil;&atilde;o') $rows 'Sem regras manuais (s&oacute; as autom&aacute;ticas).'
     Out-Html '</section>'
 
     # Aliases
-    $rows = @(); foreach ($a in (Get-List $p.aliases.alias)) { $rows += , @((H (Get-Text $a 'name')), (H (Get-Text $a 'type')), (H ((Get-Text $a 'address') -replace ' ', ', ')), (H (Get-Text $a 'descr'))) }
+    $rows = @(); foreach ($a in (Get-List $p.aliases.alias)) { $rows += , @((Esc (Get-Text $a 'name')), (Esc (Get-Text $a 'type')), (Esc ((Get-Text $a 'address') -replace ' ', ', ')), (Esc (Get-Text $a 'descr'))) }
     Out-Html '<section id="aliases"><h2>Aliases</h2>'
     Out-Table @('Nome', 'Tipo', 'Conte&uacute;do', 'Descri&ccedil;&atilde;o') $rows
     Out-Html '</section>'
@@ -398,7 +398,7 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
         $adm = ''; if ($isAdmin) { $adm = Badge 'ADMIN' 'alto' }
         $ssh = ''; if (Get-Text $u 'authorizedkeys') { $ssh = 'sim' }
         $exp = Get-Text $u 'expires'
-        $cells = @("$(H $n) $adm", (H (Get-Text $u 'descr')), $st, (H ($gs -join ', ')), (H ((Get-List $u.priv) -join ', ')), $ssh, (H $exp))
+        $cells = @("$(Esc $n) $adm", (Esc (Get-Text $u 'descr')), $st, (Esc ($gs -join ', ')), (Esc ((Get-List $u.priv) -join ', ')), $ssh, (Esc $exp))
         if (Test-Flag $u 'disabled') { $rows += @{ Class = 'off'; Cells = $cells } } else { $rows += , $cells }
     }
     Out-Table @('Usu&aacute;rio', 'Nome completo', 'Status', 'Grupos', 'Privil&eacute;gios diretos', 'Chave SSH', 'Expira') $rows
@@ -406,7 +406,7 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
     $rows = @()
     foreach ($g in $groups) {
         $mem = @(Get-List $g.member | ForEach-Object { $x = $uidName[[string]$_]; if ($x) { $x } else { "uid $_" } })
-        $rows += , @((H (Get-Text $g 'name')), (H (Get-Text $g 'description')), (H ($mem -join ', ')), (H ((Get-List $g.priv) -join ', ')))
+        $rows += , @((Esc (Get-Text $g 'name')), (Esc (Get-Text $g 'description')), (Esc ($mem -join ', ')), (Esc ((Get-List $g.priv) -join ', ')))
     }
     Out-Table @('Grupo', 'Descri&ccedil;&atilde;o', 'Membros', 'Privil&eacute;gios') $rows
     Out-Html '</section>'
@@ -418,9 +418,9 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
         $crl = Badge 'sem CRL' 'medio'; if (Get-Text $s 'crlref') { $crl = Badge 'com CRL' 'ok' }
         $st = Badge 'ativa' 'ok'; if (Test-Flag $s 'disable') { $st = Badge 'desativada' 'info' }
         $ina = Get-Text $s 'inactive_seconds'; if ($ina) { $ina = "${ina}s" }
-        $cells = @((H (Get-Text $s 'vpnid')), (H (Get-Text $s 'description')), $st, (H ("$(Get-Text $s 'protocol') $(Get-Text $s 'local_port')")), (H (Get-IfName $Cfg (Get-Text $s 'interface'))),
-                   (H (Get-Text $s 'tunnel_network')), (H (Get-Text $s 'local_network')), (H "$(Get-Text $s 'data_ciphers') / $(Get-Text $s 'digest') / tls-$(Get-Text $s 'tls_type')"),
-                   (H $caName[(Get-Text $s 'caref')]), $crl, (H $ina))
+        $cells = @((Esc (Get-Text $s 'vpnid')), (Esc (Get-Text $s 'description')), $st, (Esc ("$(Get-Text $s 'protocol') $(Get-Text $s 'local_port')")), (Esc (Get-IfName $Cfg (Get-Text $s 'interface'))),
+                   (Esc (Get-Text $s 'tunnel_network')), (Esc (Get-Text $s 'local_network')), (Esc "$(Get-Text $s 'data_ciphers') / $(Get-Text $s 'digest') / tls-$(Get-Text $s 'tls_type')"),
+                   (Esc $caName[(Get-Text $s 'caref')]), $crl, (Esc $ina))
         if (Test-Flag $s 'disable') { $rows += @{ Class = 'off'; Cells = $cells } } else { $rows += , $cells }
     }
     Out-Html '<section id="vpn"><h2>OpenVPN</h2>'
@@ -439,11 +439,11 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
         if ($revoked.ContainsKey((Get-Text $ce.N 'refid'))) { $st = Badge "revogado ($($revoked[(Get-Text $ce.N 'refid')]))" 'info' }
         $emissor = ''; if ($ce.T -eq 'Certificado') { $emissor = $caName[(Get-Text $ce.N 'caref')] }
         $subj = ''; if ($i) { $subj = $i.Subject }
-        $rows += , @((H $ce.T), (H (Get-Text $ce.N 'descr')), (H $subj), (H $emissor), (H $val), $st)
+        $rows += , @((Esc $ce.T), (Esc (Get-Text $ce.N 'descr')), (Esc $subj), (Esc $emissor), (Esc $val), $st)
     }
     Out-Html '<section id="certs"><h2>Certificados e autoridades (CA)</h2>'
     Out-Table @('Tipo', 'Nome', 'Titular', 'Emitido por', 'V&aacute;lido at&eacute;', 'Situa&ccedil;&atilde;o') $rows
-    $rows = @(); foreach ($c in $crls) { $rows += , @((H (Get-Text $c 'descr')), (H $caName[(Get-Text $c 'caref')]), (H "$(@(Get-List $c.cert).Count)"), (H ((Get-List $c.cert | ForEach-Object { Get-Text $_ 'descr' }) -join ', '))) }
+    $rows = @(); foreach ($c in $crls) { $rows += , @((Esc (Get-Text $c 'descr')), (Esc $caName[(Get-Text $c 'caref')]), (Esc "$(@(Get-List $c.cert).Count)"), (Esc ((Get-List $c.cert | ForEach-Object { Get-Text $_ 'descr' }) -join ', '))) }
     Out-Html '<h3>Listas de revoga&ccedil;&atilde;o (CRL)</h3>'
     Out-Table @('Lista', 'CA', 'Revogados', 'Certificados revogados') $rows 'Nenhuma CRL.'
     Out-Html '</section>'
@@ -454,7 +454,7 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
         $id = Get-Text $ph 'ikeid'
         $p2 = @(Get-List $p.ipsec.phase2 | Where-Object { (Get-Text $_ 'ikeid') -eq $id } | ForEach-Object { "$(Get-Text $_ 'descr'): $(Format-Endpoint $_.localid) <-> $(Format-Endpoint $_.remoteid)" })
         $st = Badge 'ativo' 'ok'; if (Test-Flag $ph 'disabled') { $st = Badge 'desativado' 'info' }
-        $rows += , @((H $id), (H (Get-Text $ph 'descr')), $st, (H (Get-Text $ph 'remote-gateway')), (H (Get-Text $ph 'iketype')), (H (Get-Text $ph 'authentication_method')), (H ($p2 -join ' | ')))
+        $rows += , @((Esc $id), (Esc (Get-Text $ph 'descr')), $st, (Esc (Get-Text $ph 'remote-gateway')), (Esc (Get-Text $ph 'iketype')), (Esc (Get-Text $ph 'authentication_method')), (Esc ($p2 -join ' | ')))
     }
     Out-Html '<section id="ipsec"><h2>IPsec</h2>'
     Out-Table @('ID', 'Descri&ccedil;&atilde;o', 'Status', 'Gateway remoto', 'IKE', 'Autentica&ccedil;&atilde;o', 'Redes (fase 2)') $rows 'Nenhum t&uacute;nel IPsec.'
@@ -467,7 +467,7 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
             if ($z.NodeType -ne 'Element') { continue }
             $st = Badge 'desativado' 'info'; if (Test-Flag $z 'enable') { $st = Badge 'ativo' 'ok' }
             $vou = 'n&atilde;o'; if ($p.voucher -and -not ($p.voucher -is [string]) -and (Test-Flag $p.voucher.($z.LocalName) 'enable')) { $vou = 'sim' }
-            $rows += , @((H (Get-Text $z 'zone')), (H (Get-Text $z 'descr')), $st, (H (Get-IfName $Cfg (Get-Text $z 'interface'))), (H (Get-Text $z 'auth_method')), (H (Get-Text $z 'timeout')), (H (Get-Text $z 'idletimeout')), $vou)
+            $rows += , @((Esc (Get-Text $z 'zone')), (Esc (Get-Text $z 'descr')), $st, (Esc (Get-IfName $Cfg (Get-Text $z 'interface'))), (Esc (Get-Text $z 'auth_method')), (Esc (Get-Text $z 'timeout')), (Esc (Get-Text $z 'idletimeout')), $vou)
         }
     }
     Out-Html '<section id="portal"><h2>Portal cativo (visitantes)</h2>'
@@ -482,8 +482,8 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
             if ($d.NodeType -ne 'Element') { continue }
             $st = Badge 'desativado' 'info'; if (Test-Flag $d 'enable') { $st = Badge 'ativo' 'ok' }
             $deny = ''; if (Test-Flag $d 'denyunknown') { $deny = 'sim' }
-            $rows += , @((H (Get-IfName $Cfg $d.LocalName)), $st, (H "$(Get-Text $d.range 'from') - $(Get-Text $d.range 'to')"), (H ((Get-List $d.dnsserver) -join ', ')), $deny, (H "$(@(Get-List $d.staticmap).Count)"))
-            foreach ($m in (Get-List $d.staticmap)) { $res += , @((H (Get-IfName $Cfg $d.LocalName)), (H (Get-Text $m 'ipaddr')), (H (Get-Text $m 'mac')), (H (Get-Text $m 'hostname')), (H (Get-Text $m 'descr'))) }
+            $rows += , @((Esc (Get-IfName $Cfg $d.LocalName)), $st, (Esc "$(Get-Text $d.range 'from') - $(Get-Text $d.range 'to')"), (Esc ((Get-List $d.dnsserver) -join ', ')), $deny, (Esc "$(@(Get-List $d.staticmap).Count)"))
+            foreach ($m in (Get-List $d.staticmap)) { $res += , @((Esc (Get-IfName $Cfg $d.LocalName)), (Esc (Get-Text $m 'ipaddr')), (Esc (Get-Text $m 'mac')), (Esc (Get-Text $m 'hostname')), (Esc (Get-Text $m 'descr'))) }
         }
     }
     Out-Table @('Interface', 'Status', 'Faixa', 'DNS entregue', 'S&oacute; aparelhos cadastrados', 'Reservas') $rows 'DHCP n&atilde;o configurado.'
@@ -494,23 +494,23 @@ footer{color:#6b7280;font-size:12px;padding:0 32px 24px}
     # Acesso administrativo
     $wg = $sys.webgui
     $rows = @(
-        , @('WebGUI', (H "$(Get-Text $wg 'protocol') porta $(Get-Text $wg 'port')"))
-        , @('Regra anti-bloqueio da WebGUI', (H $(if (Test-Flag $wg 'noantilockout') { 'desativada (acesso so pelas regras)' } else { 'ativa (LAN sempre acessa o painel)' })))
-        , @('SSH', (H $(if (Test-Flag $sys.ssh 'enable') { "ativo, porta $(Get-Text $sys.ssh 'port'), autenticacao: $(if (Get-Text $sys.ssh 'sshdkeyonly') { Get-Text $sys.ssh 'sshdkeyonly' } else { 'senha' })" } else { 'desativado' })))
-        , @('Fuso hor&aacute;rio', (H (Get-Text $sys 'timezone')))
-        , @('Servidores DNS do firewall', (H ((Get-List $sys.dnsserver) -join ', ')))
-        , @('Log remoto (syslog)', (H $(if (Test-Flag $p.syslog 'enable') { Get-Text $p.syslog 'remoteserver' } else { 'desligado' })))
+        , @('WebGUI', (Esc "$(Get-Text $wg 'protocol') porta $(Get-Text $wg 'port')"))
+        , @('Regra anti-bloqueio da WebGUI', (Esc $(if (Test-Flag $wg 'noantilockout') { 'desativada (acesso so pelas regras)' } else { 'ativa (LAN sempre acessa o painel)' })))
+        , @('SSH', (Esc $(if (Test-Flag $sys.ssh 'enable') { "ativo, porta $(Get-Text $sys.ssh 'port'), autenticacao: $(if (Get-Text $sys.ssh 'sshdkeyonly') { Get-Text $sys.ssh 'sshdkeyonly' } else { 'senha' })" } else { 'desativado' })))
+        , @('Fuso hor&aacute;rio', (Esc (Get-Text $sys 'timezone')))
+        , @('Servidores DNS do firewall', (Esc ((Get-List $sys.dnsserver) -join ', ')))
+        , @('Log remoto (syslog)', (Esc $(if (Test-Flag $p.syslog 'enable') { Get-Text $p.syslog 'remoteserver' } else { 'desligado' })))
     )
     Out-Html '<section id="acesso"><h2>Acesso administrativo e sistema</h2>'
     Out-Table @('Item', 'Configura&ccedil;&atilde;o') $rows
     Out-Html '</section>'
 
     # Pacotes
-    $rows = @(); foreach ($pk in (Get-List $p.installedpackages.package)) { $rows += , @((H (Get-Text $pk 'name')), (H (Get-Text $pk 'version'))) }
+    $rows = @(); foreach ($pk in (Get-List $p.installedpackages.package)) { $rows += , @((Esc (Get-Text $pk 'name')), (Esc (Get-Text $pk 'version'))) }
     Out-Html '<section id="pacotes"><h2>Pacotes instalados</h2>'
     Out-Table @('Pacote', 'Vers&atilde;o') $rows
     Out-Html '</section></main>'
-    Out-Html "<footer>Gerado pelo pfSense-Backup a partir do config.xml. Nenhuma senha, chave ou segredo &eacute; exibido. Arquivo de origem: $(H $SourceFile)</footer></body></html>"
+    Out-Html "<footer>Gerado pelo pfSense-Backup a partir do config.xml. Nenhuma senha, chave ou segredo &eacute; exibido. Arquivo de origem: $(Esc $SourceFile)</footer></body></html>"
     return $script:Sb.ToString()
 }
 
