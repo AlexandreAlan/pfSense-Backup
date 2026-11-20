@@ -9,7 +9,7 @@
 param([switch]$Analyzer)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$scripts = @('Backup-pfSense.ps1', 'Install-pfSenseBackup.ps1')
+$scripts = @('Backup-pfSense.ps1', 'Install-pfSenseBackup.ps1', 'Logs-pfSense.ps1', 'Relatorio-pfSense.ps1')
 $erros = 0
 
 Write-Host "PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"

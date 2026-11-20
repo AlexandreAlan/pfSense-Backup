@@ -37,6 +37,18 @@
     trocar a senha, -TrustNewCert se o certificado da WebGUI foi renovado).
     Campos editados a mao no JSON (Retries, MaxTime...) sao preservados.
 
+    VERSAO 2 (logs e auditoria) - tudo opcional e pelo MESMO usuario/senha/certificado:
+      - relatorio de auditoria em HTML a cada backup que muda a configuracao
+        (auditoria\<Nome>\), gerado pelo Relatorio-pfSense.ps1
+      - coleta dos logs do pfSense (sistema, portal de visitantes, VPNs, DHCP,
+        DNS, firewall, pfBlockerNG, Suricata, Squid/SquidGuard e LightSquid)
+        em pastas por categoria e dia, mais a planilha dos visitantes, pelo
+        Logs-pfSense.ps1 numa segunda tarefa (de hora em hora por padrao)
+    ATUALIZACAO: rodar este instalador num servidor que ja tem um perfil da
+    versao anterior so ATUALIZA: mantem chave, senha, certificado fixado,
+    horario, retencao e tarefa; copia os scripts novos, completa o JSON e
+    pergunta somente o que e novo (logs). Nada precisa ser refeito.
+
 .PARAMETER Name
     Nome curto do perfil: letras, numeros, - e _. Vira nome de arquivo e de
     tarefa. Ex.: FWMATRIZ, FWFILIAL.
@@ -164,7 +176,20 @@ param(
     [switch]$TrustNewCert,
     [switch]$NoTest,
     [switch]$Yes,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+
+    # ------------------- versao 2: logs e auditoria -------------------
+    [switch]$Logs,                               # liga a coleta de logs sem perguntar
+    [switch]$NoLogs,                             # desliga a coleta de logs
+    [string]$LogSources,                         # ex.: 'sistema,portal,openvpn,firewall'
+    [ValidateRange(5, 1440)][int]$LogEvery = 60,         # minutos entre coletas
+    [ValidateRange(500, 200000)][int]$LogLines = 5000,   # linhas pedidas por log a cada coleta
+    [ValidateRange(30, 3650)][int]$LogKeepDays = 400,    # dias guardados
+    [string]$LogsGroup = 'LOGS-PFSENSE',         # grupo com os privilegios de logs (so nas instrucoes)
+    [string]$LightSquidUrl,                      # ex.: http://172.16.10.1:7445  ('' desliga)
+    [string]$LightSquidUser,
+    [switch]$UpdateLightSquidPassword,
+    [switch]$NoReport                            # nao gera o relatorio de auditoria
 )
 
 $ErrorActionPreference = 'Stop'
@@ -180,6 +205,13 @@ $KeyFile  = Join-Path $SecDir  "$Name.key"
 $PassFile = Join-Path $SecDir  "$Name.pass"
 $EncFile  = Join-Path $SecDir  "$Name.encpass"
 $Engine   = Join-Path $BaseDir 'Backup-pfSense.ps1'
+$LogsEngine   = Join-Path $BaseDir 'Logs-pfSense.ps1'
+$ReportEngine = Join-Path $BaseDir 'Relatorio-pfSense.ps1'
+$LsPassFile   = Join-Path $SecDir  "$Name.lightsquid.pass"
+$LogsTaskName = "pfSense Logs - $Name"
+$ToolVersion   = '2.0.0'   # versao do pfSense-Backup
+$SchemaVersion = 2         # versao do formato do config\<Nome>.json (1 = sem o campo)
+$DefaultLogSources = 'sistema,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes'
 
 function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok([string]$m)   { Write-Host "    OK  $m" -ForegroundColor Green }
@@ -277,12 +309,18 @@ if ($Uninstall) {
     & schtasks.exe /Delete /TN $TaskName /F 2>&1 | Out-Null
     $ErrorActionPreference = 'Stop'
     if ($LASTEXITCODE -eq 0){ Ok "tarefa '$TaskName' removida" } else { Warn "tarefa '$TaskName' nao existia" }
-    foreach ($f in @($CfgFile, $KeyFile, $PassFile, $EncFile)) {
+    $ErrorActionPreference = 'Continue'
+    & schtasks.exe /Delete /TN $LogsTaskName /F 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    if ($LASTEXITCODE -eq 0){ Ok "tarefa '$LogsTaskName' removida" }
+    $stt = Join-Path $BaseDir "state\$Name"
+    if (Test-Path $stt) { Remove-Item $stt -Recurse -Force; Ok "apagado $stt (controle da coleta de logs)" }
+    foreach ($f in @($CfgFile, $KeyFile, $PassFile, $EncFile, $LsPassFile)) {
         if (Test-Path $f) { Remove-Item $f -Force; Ok "apagado $f" }
     }
     $st = Join-Path $BaseDir "status\$Name"
     if (Test-Path $st) { Remove-Item $st -Recurse -Force; Ok "apagado $st (status do Zabbix)" }
-    Ok "backups mantidos em $(Join-Path $BaseDir "backups\$Name") e log em $(Join-Path $BaseDir "logs\$Name") (apague na mao se quiser)"
+    Ok "mantidos (apague na mao se quiser): backups\$Name, logs\$Name, auditoria\$Name, logs-pfsense\$Name, visitantes\$Name, lightsquid\$Name"
     return
 }
 
@@ -308,6 +346,17 @@ if ($osTemCurl) {
 # Em re-execucao sem -FwHost/-User, reaproveita o JSON existente
 $existing = $null
 if (Test-Path $CfgFile) { $existing = Get-Content $CfgFile -Raw | ConvertFrom-Json }
+# Versao do perfil ja instalado: sem o campo SchemaVersion = versao 1 (a primeira).
+$oldSchema = 0
+if ($existing) { $oldSchema = 1; if ($existing.SchemaVersion) { $oldSchema = [int]$existing.SchemaVersion } }
+$upgrading = ($oldSchema -ge 1 -and $oldSchema -lt $SchemaVersion)
+if ($upgrading) {
+    Step "Atualizacao: perfil '$Name' da versao $oldSchema encontrado -> versao $SchemaVersion ($ToolVersion)"
+    Ok 'mantidos sem perguntar: firewall, porta, usuario, chave, senha, certificado fixado, horario, retencao e tarefa do backup'
+    Ok 'sera feito: copiar os scripts novos, completar o config JSON e perguntar SO o que e novo (logs e relatorio)'
+} elseif ($existing) {
+    Ok "perfil '$Name' ja esta na versao $oldSchema - reconfigurando (ENTER mantem cada valor)"
+}
 if (-not $FwHost -and $existing) { $FwHost = $existing.Host }
 if (-not $PSBoundParameters.ContainsKey('User')       -and $existing -and $existing.User)     { $User     = $existing.User }
 if (-not $PSBoundParameters.ContainsKey('Port')       -and $existing -and $existing.Port)     { $Port     = [int]$existing.Port }
@@ -327,7 +376,7 @@ if ($User -in @('admin', 'root')) {
 # porta nao veio na linha de comando (-Port), pergunta mostrando o padrao entre
 # colchetes: 443 num cadastro novo, ou a porta ja salva no perfil. ENTER mantem.
 # Com -Port ou -Yes nao pergunta nada (bom para automacao).
-if (-not $PSBoundParameters.ContainsKey('Port') -and -not $Yes) {
+if (-not $PSBoundParameters.ContainsKey('Port') -and -not $Yes -and -not $upgrading) {
     Write-Host ''
     Write-Host '  PORTA DA WebGUI DO pfSENSE' -ForegroundColor Yellow
     Write-Host '  --------------------------'
@@ -358,7 +407,7 @@ function Read-Valor([string]$Rotulo, [string]$Atual, [scriptblock]$Valido, [stri
         Warn $Ajuda
     }
 }
-$perguntaAgenda = -not $Yes -and -not ($PSBoundParameters.ContainsKey('Time') -and
+$perguntaAgenda = -not $Yes -and -not $upgrading -and -not ($PSBoundParameters.ContainsKey('Time') -and
                   $PSBoundParameters.ContainsKey('KeepDays') -and $PSBoundParameters.ContainsKey('MinKeep'))
 if ($perguntaAgenda) {
     Write-Host ''
@@ -387,8 +436,87 @@ if ($perguntaAgenda) {
 }
 Ok "backup diario as $Time; apaga os com mais de $KeepDays dia(s), mas mantem sempre os $MinKeep mais recentes"
 
+# --------------------- logs e relatorio (versao 2) ---------------------
+# Cada valor: o da linha de comando; senao o ja salvo no perfil; senao pergunta
+# (so o que e novo) ou usa o padrao.
+$reportOn = $true
+if ($NoReport) { $reportOn = $false }
+elseif ($existing -and $null -ne $existing.Report) { $reportOn = [bool]$existing.Report }
+
+$logsAsked = $false
+if ($NoLogs)    { $logsOn = $false }
+elseif ($Logs)  { $logsOn = $true }
+elseif ($existing -and $null -ne $existing.Logs) { $logsOn = [bool]$existing.Logs }
+elseif ($Yes)   { $logsOn = $false }
+else {
+    Write-Host ''
+    Write-Host '  COLETA DE LOGS DO pfSENSE (novo na versao 2)' -ForegroundColor Yellow
+    Write-Host '  --------------------------------------------'
+    Write-Host '  Guarda neste servidor, organizados por categoria e por dia, os logs do'
+    Write-Host '  pfSense: sistema, portal de visitantes (com a planilha de acessos para o'
+    Write-Host '  Excel), OpenVPN, IPsec, DHCP, DNS, gateways, firewall, pfBlockerNG,'
+    Write-Host '  Suricata, Squid/SquidGuard e, se existir, os relatorios do LightSquid.'
+    Write-Host '  Usa o MESMO usuario e a MESMA senha do backup, pela WebGUI (HTTPS).'
+    Write-Host "  O usuario precisa estar tambem num grupo de logs ($LogsGroup) - as"
+    Write-Host '  instrucoes aparecem a seguir.'
+    Write-Host ''
+    $ans = Read-Host '  Ativar a coleta de logs? (S/N)'
+    $logsOn = ($ans -match '^[sSyY]')
+    $logsAsked = $true
+}
+
+$srcFinal = $DefaultLogSources
+if ($LogSources) { $srcFinal = $LogSources } elseif ($existing -and $existing.LogSources) { $srcFinal = [string]$existing.LogSources }
+if (-not $PSBoundParameters.ContainsKey('LogEvery')    -and $existing -and $existing.LogEvery)    { $LogEvery    = [int]$existing.LogEvery }
+if (-not $PSBoundParameters.ContainsKey('LogLines')    -and $existing -and $existing.LogLines)    { $LogLines    = [int]$existing.LogLines }
+if (-not $PSBoundParameters.ContainsKey('LogKeepDays') -and $existing -and $existing.LogKeepDays) { $LogKeepDays = [int]$existing.LogKeepDays }
+if (-not $PSBoundParameters.ContainsKey('LightSquidUrl')  -and $existing -and $existing.LightSquidUrl)  { $LightSquidUrl  = [string]$existing.LightSquidUrl }
+if (-not $PSBoundParameters.ContainsKey('LightSquidUser') -and $existing -and $existing.LightSquidUser) { $LightSquidUser = [string]$existing.LightSquidUser }
+
+if ($logsOn -and $logsAsked) {
+    $ans = Read-Host '  Este pfSense tem o pacote LightSquid (relatorios de navegacao)? (S/N)'
+    if ($ans -match '^[sSyY]') {
+        $LightSquidUrl  = Read-Valor 'Endereco do LightSquid' "http://${FwHost}:7445" { param($v) $v -match '^https?://' } 'use http://IP:porta ou https://IP:porta'
+        $LightSquidUser = Read-Host '  Usuario do LightSquid (Services > Squid > LightSquid, vazio = sem senha)'
+    }
+}
+
+if ($logsOn -and -not $Yes -and ($logsAsked -or $upgrading -or $PSBoundParameters.ContainsKey('Logs'))) {
+    Write-Host ''
+    Write-Host '  PRE-REQUISITO DOS LOGS NO pfSense' -ForegroundColor Yellow
+    Write-Host '  ---------------------------------'
+    Write-Host "  1. System > User Manager > Groups > Add:  $LogsGroup  (Scope: Local)"
+    Write-Host '     Assigned Privileges > Add, SO os das fontes que voce quer:'
+    Write-Host '       WebCfg - Status: Logs: System                 (sistema)'
+    Write-Host '       WebCfg - Status: System Logs: Portal Auth     (portal de visitantes)'
+    Write-Host '       WebCfg - Status: System Logs: OpenVPN         (openvpn)'
+    Write-Host '       WebCfg - Status: System Logs: IPsec VPN       (ipsec)'
+    Write-Host '       WebCfg - Status: Logs: DHCP                   (dhcp)'
+    Write-Host '       WebCfg - Status: Logs: Resolver               (dns)'
+    Write-Host '       WebCfg - Status: Logs: Gateways               (gateways)'
+    Write-Host '       WebCfg - Status: Logs: Firewall               (firewall)'
+    Write-Host '       WebCfg - Status: DHCP leases                  (dhcp-concessoes)'
+    Write-Host '       WebCfg - Firewall: pfBlockerNG                (pfblockerng)'
+    Write-Host '       WebCfg - Services: suricata package.          (suricata)'
+    Write-Host '       WebCfg - Services: Squid package              (squid e squidguard)'
+    Write-Host "  2. Coloque o usuario '$User' TAMBEM nesse grupo (ele continua no de backup)."
+    Write-Host '  ATENCAO: os privilegios dos pacotes (pfBlockerNG, Suricata, Squid) tambem'
+    Write-Host '  permitem ALTERAR esses pacotes - o pfSense nao tem "so leitura" para eles.'
+    Write-Host '  Inclua so os que for coletar. O instalador confere cada um a seguir.'
+    Write-Host ''
+    $ans = Read-Host "  Ja criou o grupo '$LogsGroup' e colocou o '$User' nele? (S/N)"
+    if ($ans -notmatch '^[sSyY]') {
+        Warn 'logs ficam DESLIGADOS por enquanto. Quando o grupo estiver pronto, rode de novo com -Logs.'
+        $logsOn = $false
+    }
+}
+if ($logsOn) { Ok "coleta de logs: a cada $LogEvery min, $LogLines linhas por log, guarda $LogKeepDays dias - fontes: $srcFinal" }
+else { Ok 'coleta de logs: desligada (ligue depois com -Logs)' }
+if ($LightSquidUrl -and $logsOn) { Ok "LightSquid: $LightSquidUrl" }
+if ($reportOn) { Ok 'relatorio de auditoria: ligado (auditoria\<Nome>\ a cada backup que muda a configuracao)' }
+
 # ---------------------- 0. pre-requisito no pfSense -------------------
-if (-not $Yes -and (-not $existing -or $UpdatePassword -or $PSBoundParameters.ContainsKey('User'))) {
+if (-not $Yes -and -not $upgrading -and (-not $existing -or $UpdatePassword -or $PSBoundParameters.ContainsKey('User'))) {
     Write-Host ''
     Write-Host '  PRE-REQUISITO NO pfSense (obrigatorio)' -ForegroundColor Yellow
     Write-Host '  ---------------------------------------'
@@ -439,11 +567,17 @@ if ((Resolve-Path $aqui).Path.TrimEnd('\') -ne (Resolve-Path $BaseDir).Path.Trim
     if (-not (Test-Path $src)) { throw "Backup-pfSense.ps1 nao encontrado ao lado deste instalador ($src)." }
     Copy-Item $src $Engine -Force
     Copy-Item $PSCommandPath (Join-Path $BaseDir 'Install-pfSenseBackup.ps1') -Force
+    foreach ($extra in @('Logs-pfSense.ps1', 'Relatorio-pfSense.ps1')) {
+        $e = Join-Path $aqui $extra
+        if (Test-Path $e) { Copy-Item $e (Join-Path $BaseDir $extra) -Force }
+        else { Warn "$extra nao esta ao lado do instalador - recurso indisponivel" }
+    }
     Ok "scripts copiados para $BaseDir"
 } else {
     Ok 'rodando de dentro de BaseDir, nada a copiar'
 }
 if (-not (Test-Path $Engine)) { throw "motor nao encontrado em $Engine." }
+if ($logsOn -and -not (Test-Path $LogsEngine)) { Warn "Logs-pfSense.ps1 nao encontrado em $BaseDir - coleta de logs desligada."; $logsOn = $false }
 
 # ------------------------------ curl.exe ------------------------------
 # Verificado ANTES de pedir senha: sem curl nada funciona. Windows 10 1803+ e
@@ -567,6 +701,14 @@ if ($Encrypt) {
     }
 }
 
+if ($logsOn -and $LightSquidUrl -and $LightSquidUser) {
+    if ($UpdateLightSquidPassword -or -not (Test-Path $LsPassFile)) {
+        $s = Read-ConfirmedSecret "Senha do LightSquid para o usuario '$LightSquidUser'"
+        Save-Secret $s $LsPassFile $key
+        Ok "senha do LightSquid gravada cifrada: $LsPassFile"
+    } else { Ok 'senha do LightSquid ja existia, mantida (use -UpdateLightSquidPassword para trocar)' }
+}
+
 # ------------------ 5. porta + certificado (pinning) ------------------
 Step "Testando ${FwHost}:$Port"
 $tcp = New-Object Net.Sockets.TcpClient
@@ -634,6 +776,17 @@ $cfg = [ordered]@{
     Retries        = [int](Get-Existing 'Retries' 3)
     RetryDelay     = [int](Get-Existing 'RetryDelay' 60)
     CurlPath       = [string]$curlSalvar
+    SchemaVersion  = $SchemaVersion
+    ToolVersion    = $ToolVersion
+    Report         = [bool]$reportOn
+    Logs           = [bool]$logsOn
+    LogSources     = [string]$srcFinal
+    LogEvery       = $LogEvery
+    LogLines       = $LogLines
+    LogKeepDays    = $LogKeepDays
+    LogMaxTime     = [int](Get-Existing 'LogMaxTime' 600)
+    LightSquidUrl  = [string]$LightSquidUrl
+    LightSquidUser = [string]$LightSquidUser
 }
 New-Object psobject -Property $cfg | ConvertTo-Json | Set-Content -Path $CfgFile -Encoding ASCII
 Ok $CfgFile
@@ -666,12 +819,40 @@ if ($NoTest) {
     Ok 'usuario correto: acessa o backup e nada alem disso'
 }
 
+# ------------- 8b. verificacao dos privilegios de logs ----------------
+# Exit do Logs-pfSense.ps1 -CheckOnly: 0 = tudo OK, 2 = falta privilegio de
+# alguma fonte (coleta o resto), 1 = erro (login, privilegio DEMAIS, certificado).
+if ($logsOn -and -not $NoTest) {
+    Step "Verificando os privilegios de logs do usuario '$User'"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsEngine -Name $Name -BaseDir $BaseDir -CheckOnly
+    $rcLogs = $LASTEXITCODE
+    if ($rcLogs -eq 0) { Ok 'usuario le todas as fontes pedidas e continua sem acesso administrativo' }
+    elseif ($rcLogs -eq 2) { Warn "faltam privilegios para algumas fontes (linhas FALTA acima). A coleta segue com as outras; inclua os privilegios no grupo $LogsGroup ou tire a fonte com -LogSources." }
+    else {
+        Warn 'verificacao dos logs REPROVADA (veja a mensagem acima). A tarefa de logs NAO sera criada; o backup segue normal.'
+        $logsOn = $false
+    }
+}
+
 # ------------------------ 9. tarefa agendada --------------------------
 Step "Tarefa agendada '$TaskName' (diaria $Time, SYSTEM)"
 $tr = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name -BaseDir $BaseDir"
 & schtasks.exe /Create /F /TN $TaskName /RU SYSTEM /RL HIGHEST /SC DAILY /ST $Time /TR $tr | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "schtasks falhou ao criar a tarefa (exit $LASTEXITCODE)." }
 Ok 'tarefa criada/atualizada'
+
+if ($logsOn) {
+    Step "Tarefa agendada '$LogsTaskName' (a cada $LogEvery min, SYSTEM)"
+    $trl = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsEngine -Name $Name -BaseDir $BaseDir"
+    & schtasks.exe /Create /F /TN $LogsTaskName /RU SYSTEM /RL HIGHEST /SC MINUTE /MO $LogEvery /TR $trl | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "schtasks falhou ao criar a tarefa de logs (exit $LASTEXITCODE)." }
+    Ok 'tarefa de logs criada/atualizada'
+} else {
+    $ErrorActionPreference = 'Continue'
+    & schtasks.exe /Delete /TN $LogsTaskName /F 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
+    if ($LASTEXITCODE -eq 0) { Ok "tarefa '$LogsTaskName' removida (logs desligados)" }
+}
 
 # -------------------------- 10. teste real ----------------------------
 if ($NoTest) {
@@ -681,6 +862,18 @@ if ($NoTest) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Engine -Name $Name -BaseDir $BaseDir
     if ($LASTEXITCODE -eq 0) { Ok 'backup de teste OK' }
     else { Warn "backup de teste FALHOU - veja $(Join-Path $BaseDir "logs\$Name\$Name.log") e a secao Problemas do README." }
+    if ($reportOn -and (Test-Path $ReportEngine)) {
+        Step 'Relatorio de auditoria'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ReportEngine -Name $Name -BaseDir $BaseDir -Force
+        if ($LASTEXITCODE -eq 0) { Ok "relatorio em $(Join-Path $BaseDir "auditoria\$Name\ultimo.html")" }
+        else { Warn 'relatorio de auditoria falhou (o backup nao e afetado).' }
+    }
+    if ($logsOn) {
+        Step 'Primeira coleta de logs (pode levar alguns minutos)'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsEngine -Name $Name -BaseDir $BaseDir
+        if ($LASTEXITCODE -eq 0) { Ok "logs em $(Join-Path $BaseDir "logs-pfsense\$Name")" }
+        else { Warn "primeira coleta de logs FALHOU - veja $(Join-Path $BaseDir "logs\$Name\$Name-logs.log")." }
+    }
 }
 
 Write-Host ''
@@ -691,6 +884,14 @@ Write-Host "    retencao:      $KeepDays dia(s), mantendo sempre os $MinKeep mai
 Write-Host "    backups:       $(Join-Path $BaseDir "backups\$Name")"
 Write-Host "    log:           $(Join-Path $BaseDir "logs\$Name\$Name.log")"
 Write-Host "    Zabbix:        $(Join-Path $BaseDir "status\$Name")\  (status.txt, ultimo-ok.txt, mensagem.txt)"
+Write-Host "    versao:        pfSense-Backup $ToolVersion (perfil versao $SchemaVersion$(if ($upgrading) { ", atualizado da versao $oldSchema" }))"
+if ($reportOn) { Write-Host "    auditoria:     $(Join-Path $BaseDir "auditoria\$Name")\ultimo.html" }
+if ($logsOn) {
+    Write-Host "    logs:          $(Join-Path $BaseDir "logs-pfsense\$Name") (a cada $LogEvery min, tarefa '$LogsTaskName')"
+    Write-Host "    visitantes:    $(Join-Path $BaseDir "visitantes\$Name") (planilhas mensais do portal)"
+    if ($LightSquidUrl) { Write-Host "    lightsquid:    $(Join-Path $BaseDir "lightsquid\$Name")" }
+    Write-Host "    Zabbix logs:   $(Join-Path $BaseDir "status\$Name")\  (logs-status.txt, logs-ultimo-ok.txt, logs-mensagem.txt)"
+}
 Write-Host "    Para mudar horario/retencao: rode de novo so com -Name $Name e responda as perguntas."
 Write-Host ''
 Write-Host "Pronto. Para testar como SYSTEM (igual a execucao diaria):" -ForegroundColor Cyan
