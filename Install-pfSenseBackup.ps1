@@ -218,7 +218,7 @@ $LogsTaskName = "pfSense Logs - $Name"
 $SshKeyFile   = Join-Path $SecDir  "$Name.ssh_ed25519"
 $KnownHosts   = Join-Path $SecDir  "$Name.known_hosts"
 $KeyLineFile  = Join-Path $CfgDir  "$Name-chave-ssh-pfsense.txt"
-$ToolVersion   = '2.1.1'   # versao do pfSense-Backup
+$ToolVersion   = '2.1.2'   # versao do pfSense-Backup
 $SchemaVersion = 3         # versao do formato do config\<Nome>.json (1 = sem o campo; 3 = logs pelo SSH)
 $DefaultLogSources = 'sistema,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes'
 $DefaultSshSources = 'sistema,autenticacao,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes'

@@ -180,7 +180,8 @@ function ArqSsh([string]$Cat) { $d = Get-Date; return (Join-Path $sw "logs-pfsen
 
 Cenario 'a trava recusa tudo que nao for list/get/sig dos logs' {
     $tentativas = @('id', 'list x', 'get /etc/passwd 0', 'get /var/log/../../../etc/passwd 0', 'get /var/log/system.log 0;id',
-                    'get /var/log/system.log abc', 'sig /etc/passwd', 'get', 'get /var/log/nginx.log 0')
+                    'get /var/log/system.log abc', 'get /var/log/system.log -n', 'get /var/log/system.log 1a', 'get /var/log/system.log 0x10',
+                    'sig /etc/passwd', 'get', 'get /var/log/nginx.log 0')
     foreach ($t in $tentativas) {
         $r = Invoke-Ssh ($t -split ' ')
         $out = Read-Text $r.Out
@@ -257,6 +258,7 @@ Cenario 'linha da chave para o pfSense: travas e aspas escapadas' {
     if ($l -notmatch '^restrict,from="172\.16\.10\.7",command="/bin/sh -c ''.*''" ssh-ed25519 AAAAC3NzaTESTE pfSense-Backup$') { throw "formato: $l" }
     $soltas = ([regex]::Matches(($l -replace '\\"', ''), '"')).Count
     if ($soltas -ne 4) { throw "aspas sem escape dentro do command: $soltas (esperado 4: from e command)" }
+    if ((New-ForcedCommand).Contains([string][char]33)) { throw 'o comando forcado tem exclamacao: o tcsh do pfSense expande como historico e quebra tudo' }
     "($($l.Length) caracteres)"
 }
 
