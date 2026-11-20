@@ -124,8 +124,55 @@ $CategoryDir = @{
 $PfbFiles = @('ip_block.log', 'ip_permit.log', 'dnsbl.log', 'pfblockerng.log', 'error.log')
 # Arquivos de cada interface do Suricata.
 $SuricataFiles = @('alerts.log', 'block.log')
+$SuricataDir = @{ 'alerts' = 'alertas'; 'block' = 'bloqueios' }
 
 $Months = @{ Jan = 1; Feb = 2; Mar = 3; Apr = 4; May = 5; Jun = 6; Jul = 7; Aug = 8; Sep = 9; Oct = 10; Nov = 11; Dec = 12 }
+
+# ------------------- modo SSH (LogTransport = "ssh") -------------------
+# Le os ARQUIVOS de log direto no pfSense, por SSH, com uma chave TRAVADA no
+# authorized_keys do usuario de backup: so do IP deste servidor, sem terminal e
+# so com 3 comandos (list, get, sig) sobre uma lista fixa de arquivos. Pega o
+# log COMPLETO (inclusive o firewall e a autenticacao), so os bytes novos, sem
+# pesar no pfSense e sem precisar de privilegio de pacote na WebGUI.
+# Log do syslog do pfSense -> fonte do perfil
+$SshSyslog = [ordered]@{
+    'system' = 'sistema'; 'auth' = 'autenticacao'; 'portalauth' = 'portal'; 'openvpn' = 'openvpn'
+    'ipsec' = 'ipsec'; 'dhcpd' = 'dhcp'; 'resolver' = 'dns'; 'gateways' = 'gateways'; 'filter' = 'firewall'; 'ppp' = 'ppp'
+}
+$SshDefaultSources = @('sistema', 'autenticacao', 'portal', 'openvpn', 'ipsec', 'dhcp', 'dns', 'gateways',
+                       'firewall', 'pfblockerng', 'suricata', 'squid', 'squidguard', 'dhcp-concessoes')
+
+function New-ForcedCommand([string]$Root = '') {
+    # Script que o pfSense roda no lugar de QUALQUER comando enviado com a chave do
+    # servidor (command="..." no authorized_keys). Uma linha, sem aspas simples (vai
+    # dentro de sh -c '...' e o shell do usuario e o tcsh). $Root so existe para os testes.
+    $files = @("$Root/var/log/system.log*", "$Root/var/log/auth.log*", "$Root/var/log/portalauth.log*",
+        "$Root/var/log/openvpn.log*", "$Root/var/log/ipsec.log*", "$Root/var/log/dhcpd.log*",
+        "$Root/var/log/resolver.log*", "$Root/var/log/gateways.log*", "$Root/var/log/filter.log*",
+        "$Root/var/log/ppp.log*", "$Root/var/log/arquivo/*", "$Root/var/log/pfblockerng/*.log",
+        "$Root/var/log/suricata/suricata_*/alerts.log*", "$Root/var/log/suricata/suricata_*/block.log*",
+        "$Root/var/squidGuard/log/block.log*", "$Root/var/squid/logs/access.log*", "$Root/var/dhcpd/var/db/dhcpd.leases")
+    $glob = "$Root/var/log/*.log $Root/var/log/*.log.* $Root/var/log/arquivo/* $Root/var/log/pfblockerng/*.log " +
+            "$Root/var/log/suricata/suricata_*/alerts.log* $Root/var/log/suricata/suricata_*/block.log* " +
+            "$Root/var/squidGuard/log/block.log* $Root/var/squid/logs/access.log* $Root/var/dhcpd/var/db/dhcpd.leases"
+    $sh = 'ok(){ case "$1" in *..*|*" "*) return 1;; esac; case "$1" in ' + ($files -join '|') + ') return 0;; esac; return 1; }; ' +
+          'set -f; set -- $SSH_ORIGINAL_COMMAND; set +f; ' +
+          'case "$1" in ' +
+          'list) [ $# -eq 1 ] || exit 2; for f in ' + $glob + '; do [ -f "$f" ] && [ -r "$f" ] && ok "$f" || continue; ' +
+              's=$(wc -c < "$f" | tr -d " "); case "$f" in *.bz2) h=-;; *) h=$(head -n 1 "$f" | cksum | cut -d " " -f 1);; esac; echo "$s $h $f"; done; exit 0;; ' +
+          'get) [ $# -eq 3 ] || exit 2; ok "$2" || exit 2; case "$3" in *[!0-9]*|"") exit 2;; esac; n=$(($3+1)); ' +
+              'case "$2" in *.bz2) bzcat -- "$2" | tail -c +$n;; *) tail -c +$n -- "$2";; esac; exit 0;; ' +
+          'sig) [ $# -eq 2 ] || exit 2; ok "$2" || exit 2; ' +
+              'case "$2" in *.bz2) bzcat -- "$2" | head -n 1;; *) head -n 1 -- "$2";; esac | cksum | cut -d " " -f 1; exit 0;; ' +
+          'esac; echo "comando recusado" >&2; exit 2'
+    return "/bin/sh -c '$sh'"
+}
+
+function Get-AuthorizedKeyLine([string]$PubKey, [string]$From) {
+    # Linha pronta para colar no pfSense (User Manager > usuario > Authorized SSH Keys).
+    $cmd = (New-ForcedCommand) -replace '\\', '\\' -replace '"', '\"'   # escapa \ e " para dentro de command="..."
+    return ('restrict,from="{0}",command="{1}" {2}' -f $From, $cmd, $PubKey.Trim())
+}
 
 # ------------------------- caminhos do perfil -------------------------
 $CfgFile   = Join-Path $BaseDir "config\$Name.json"
@@ -140,6 +187,8 @@ $StateDir  = Join-Path $BaseDir "state\$Name"
 $LogRoot   = Join-Path $BaseDir "logs-pfsense\$Name"
 $VisitDir  = Join-Path $BaseDir "visitantes\$Name"
 $LsRoot    = Join-Path $BaseDir "lightsquid\$Name"
+$SshKeyFile = Join-Path $SecDir "$Name.ssh_ed25519"
+$KnownHosts = Join-Path $SecDir "$Name.known_hosts"
 $TmpFile   = Join-Path $SecDir  ("logs_" + [guid]::NewGuid().ToString('N') + '.tmp')
 $CookieJar = Join-Path $SecDir  ("cookies_" + [guid]::NewGuid().ToString('N') + '.tmp')
 
@@ -516,7 +565,7 @@ function Collect-Suricata {
     }
     if ($inst.Count -eq 0) { $inst = @([pscustomobject]@{ Id = '0'; Nome = 'interface0' }) }
     foreach ($i in $inst) {
-        $pasta = ($i.Nome -replace '[^A-Za-z0-9_.-]+', '_').Trim('_')
+        $pasta = ConvertTo-FolderName (Get-SuricataIfName $i.Nome)
         if (-not $pasta) { $pasta = "interface$($i.Id)" }
         foreach ($f in $SuricataFiles) {
             $code = Send-Form 'suricata/suricata_logs_browser.php' @('action=load', "file=$f", "instance=$($i.Id)")
@@ -528,7 +577,7 @@ function Collect-Suricata {
             $all = @($txt -split "`r?`n" | Where-Object { $_ })
             $base_ = $f -replace '\.log$', ''
             $sel = Select-NewLines $all "suricata-$($i.Id)-$base_" 0 $false
-            Save-Lines (Join-Path 'suricata' "$pasta-$base_") $sel.New "suricata/$pasta-$base_"
+            Save-Lines (Join-Path 'suricata' (Join-Path $pasta $SuricataDir[$base_])) $sel.New "suricata/$pasta/$($SuricataDir[$base_])"
         }
     }
 }
@@ -635,6 +684,318 @@ function Collect-LightSquid {
     if ($n -gt 0) { $script:Counts['lightsquid (dias)'] = $n }
 }
 
+# ============================ modo SSH ================================
+function ConvertTo-FolderName([string]$Text) {
+    return (($Text -replace '[^A-Za-z0-9_.-]+', '_').Trim('_'))
+}
+
+function Get-SuricataIfName([string]$Text) {
+    # Opcao da tela do Suricata: "(LAN) LAN" ou "(VISITANTES) VISITANTES - scan e ataques" -> nome da interface
+    $m = [regex]::Match($Text, '^\s*\(([^)]+)\)')
+    if ($m.Success) { return $m.Groups[1].Value.Trim() }
+    return $Text
+}
+
+function Invoke-Ssh([string[]]$Remote, [string]$OutFile) {
+    # ssh com a chave do perfil e o host fixado (known_hosts proprio, StrictHostKeyChecking).
+    # A saida vai byte a byte para $OutFile (Start-Process redireciona pelo handle do
+    # arquivo, sem passar pela pagina de codigo do console). Devolve @{ Code; Err }.
+    $err = "$OutFile.err"
+    if (Test-Path $OutFile) { Remove-Item $OutFile -Force }
+    $a = @('-i', $SshKeyFile, '-p', "$sshPort", '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
+           '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$KnownHosts", '-o', 'GlobalKnownHostsFile=none',
+           '-o', "ConnectTimeout=$timeout", '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
+           '-o', 'LogLevel=ERROR', "$sshUser@$($cfg.Host)") + $Remote
+    $p = Start-Process -FilePath $script:Ssh -ArgumentList $a -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $OutFile -RedirectStandardError $err
+    $e = (Read-Text $err).Trim()
+    Remove-Item $err -Force -ErrorAction SilentlyContinue
+    if ($p.ExitCode -eq 255) {
+        if ($e -match 'Host key verification failed|IDENTIFICATION HAS CHANGED|No .* host key is known') {
+            Stop-Permanent "a chave SSH do pfSense NAO confere com a fixada no cadastro ($KnownHosts). Se o pfSense foi reinstalado, confira e rode o instalador com -TrustNewSshKey. Se nao foi, alguem pode estar se passando pelo firewall."
+        }
+        if ($e -match 'Permission denied') {
+            Stop-Permanent "o pfSense recusou a chave SSH do servidor. Confira se a linha gerada pelo instalador esta no usuario '$sshUser' (Authorized SSH Keys) e se ele tem 'User - System: Shell account access'."
+        }
+        throw "ssh falhou: $e"
+    }
+    return [pscustomobject]@{ Code = $p.ExitCode; Err = $e }
+}
+
+function Get-SshList {
+    $r = Invoke-Ssh @('list') $TmpFile
+    if ($r.Code -ne 0) { Stop-Permanent "o comando 'list' foi recusado pelo pfSense ($($r.Err)). A linha da chave no pfSense esta completa (com o command=...)?" }
+    $out = @()
+    foreach ($l in ((Read-Text $TmpFile) -split "`r?`n")) {
+        $m = [regex]::Match($l, '^(\d+) (\S+) (/\S+)$')
+        if ($m.Success) { $out += [pscustomobject]@{ Size = [int64]$m.Groups[1].Value; Sig = $m.Groups[2].Value; Path = $m.Groups[3].Value } }
+    }
+    return , $out
+}
+
+function Get-SshSig([string]$Path) {
+    $r = Invoke-Ssh @('sig', $Path) $TmpFile
+    if ($r.Code -ne 0) { return '' }
+    return (Read-Text $TmpFile).Trim()
+}
+
+function Get-StateKey([string]$Path) { return ('ssh' + ($Path -replace '[^A-Za-z0-9]+', '_')) }
+
+function Get-PosState([string]$Path) {
+    $f = Join-Path $StateDir ((Get-StateKey $Path) + '.pos')
+    if (-not (Test-Path $f)) { return $null }
+    $p = ((Read-Text $f).Trim()) -split ' '
+    if ($p.Count -lt 2) { return $null }
+    return [pscustomobject]@{ Sig = $p[0]; Off = [int64]$p[1] }
+}
+
+function Set-PosState([string]$Path, [string]$Sig, [int64]$Off) {
+    if ($CheckOnly) { return }
+    if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
+    [IO.File]::WriteAllText((Join-Path $StateDir ((Get-StateKey $Path) + '.pos')), "$Sig $Off", (New-Object Text.ASCIIEncoding))
+}
+
+function Complete-Lines([string]$File) {
+    # Corta a ultima linha incompleta (o pfSense pode estar no meio dela). Devolve
+    # quantos bytes foram aproveitados: a proxima coleta continua dali.
+    if (-not (Test-Path $File)) { return [int64]0 }
+    $fs = [IO.File]::Open($File, 'Open', 'ReadWrite')
+    try {
+        $pos = $fs.Length - 1
+        $buf = New-Object byte[] 1
+        while ($pos -ge 0) {
+            $fs.Position = $pos
+            [void]$fs.Read($buf, 0, 1)
+            if ($buf[0] -eq 10) { break }
+            $pos--
+        }
+        $fs.SetLength($pos + 1)
+        return [int64]($pos + 1)
+    } finally { $fs.Dispose() }
+}
+
+function Save-LinesFromFile([string]$Category, [string]$File, [string]$Source, [string]$TailState, [bool]$KeepLines) {
+    # Versao "streaming" do Save-Lines para arquivos grandes (o firewall da varias
+    # dezenas de MB): le linha a linha e escreve direto no arquivo de cada dia.
+    $enc = New-Object Text.UTF8Encoding($false)
+    $now = Get-Date
+    $writers = @{}; $cache = @{}; $tail = New-Object System.Collections.Generic.Queue[string]
+    $kept = New-Object System.Collections.ArrayList
+    $n = 0; $lastKey = $now.ToString('yyyy-MM-dd'); $lastDate = $now
+    $reader = New-Object IO.StreamReader($File, $enc)
+    try {
+        while ($null -ne ($l = $reader.ReadLine())) {
+            if ($l -eq '') { continue }
+            $key = $null
+            if ($l.Length -gt 15 -and $l[3] -eq ' ' -and $Months.ContainsKey($l.Substring(0, 3))) {
+                $p6 = $l.Substring(0, 6)   # "Nov 20": um calculo de data por dia, nao por linha
+                if (-not $cache.ContainsKey($p6)) { $cache[$p6] = (Get-LineDate $l $now).ToString('yyyy-MM-dd') }
+                $key = $cache[$p6]
+            } else {
+                $d = Get-LineDate $l $lastDate
+                if ($d -gt $now.AddDays(1)) { $d = $lastDate }
+                $lastDate = $d
+                $key = $d.ToString('yyyy-MM-dd')
+            }
+            if (-not $key) { $key = $lastKey }
+            $lastKey = $key
+            if (-not $writers.ContainsKey($key)) {
+                $dir = Join-Path $LogRoot (Join-Path $Category (Join-Path $key.Substring(0, 4) $key.Substring(5, 2)))
+                if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+                $writers[$key] = New-Object IO.StreamWriter((Join-Path $dir "$key.log"), $true, $enc)
+            }
+            $writers[$key].Write($l + "`r`n")
+            $tail.Enqueue($l); if ($tail.Count -gt 30) { [void]$tail.Dequeue() }
+            if ($KeepLines) { [void]$kept.Add($l) }
+            $n++
+        }
+    } finally {
+        $reader.Dispose()
+        foreach ($w in $writers.Values) { $w.Dispose() }
+    }
+    if ($tail.Count -gt 0 -and $TailState -and -not $CheckOnly) {
+        if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
+        [IO.File]::WriteAllLines((Join-Path $StateDir "$TailState.last"), [string[]]$tail.ToArray(), $enc)
+    }
+    if ($n -gt 0) { if ($script:Counts.Contains($Source)) { $script:Counts[$Source] += $n } else { $script:Counts[$Source] = $n } }
+    return , $kept
+}
+
+function Get-RotationOrder($Entry) {
+    # Mais novo primeiro: <log>.0, .1, ... e depois os arquivados (arquivo/<log>-AAAAMMDD-HHMMSS), do mais novo ao mais velho.
+    $m = [regex]::Match($Entry.Path, '\.(\d+)(\.bz2)?$')
+    if ($m.Success -and $Entry.Path -notmatch '/arquivo/') { return ('0-{0:D9}' -f [int]$m.Groups[1].Value) }
+    $m = [regex]::Match($Entry.Path, '(\d{8})-(\d{6})(?:-(\d+))?')
+    if ($m.Success) {
+        $inv = 99999999999999 - [int64]($m.Groups[1].Value + $m.Groups[2].Value)
+        return ('1-{0:D14}-{1:D3}' -f $inv, (999 - [int]('0' + $m.Groups[3].Value)))
+    }
+    return ('2-' + $Entry.Path)
+}
+
+function Sync-SshLog([string]$Source, [string]$Category, [string]$Path, $ByPath, $Rotated, [bool]$KeepLines) {
+    # Traz so o que e novo de um log, continuando do byte exato onde a coleta parou.
+    # Se o log girou desde a ultima vez, acha o arquivo antigo pela 1a linha
+    # (assinatura), termina de ler ele e depois le o atual do comeco.
+    $cur = $ByPath[$Path]
+    if (-not $cur) { return }
+    $st = Get-PosState $Path
+    $key = Get-StateKey $Path
+    $chunks = New-Object System.Collections.ArrayList
+    if (-not $st) {
+        [void]$chunks.Add(@{ Path = $Path; From = [int64]0; Dedupe = $false })
+    } elseif ($cur.Sig -eq $st.Sig -and $cur.Size -ge $st.Off) {
+        if ($cur.Size -eq $st.Off) { return }   # nada novo
+        [void]$chunks.Add(@{ Path = $Path; From = $st.Off; Dedupe = $false })
+    } else {
+        $ord = @($Rotated | Sort-Object { Get-RotationOrder $_ })
+        $found = -1
+        for ($i = 0; $i -lt $ord.Count -and $i -lt 50; $i++) {
+            $sig = $ord[$i].Sig
+            if ($sig -eq '-') { $sig = Get-SshSig $ord[$i].Path }
+            if ($sig -eq $st.Sig) { $found = $i; break }
+        }
+        if ($found -ge 0) {
+            [void]$chunks.Add(@{ Path = $ord[$found].Path; From = $st.Off; Dedupe = $false })
+            for ($j = $found - 1; $j -ge 0; $j--) { [void]$chunks.Add(@{ Path = $ord[$j].Path; From = [int64]0; Dedupe = $false }) }
+            [void]$chunks.Add(@{ Path = $Path; From = [int64]0; Dedupe = $false })
+        } else {
+            # Reescrito no lugar (o pfBlockerNG faz isso) ou o antigo ja nao existe:
+            # baixa o atual inteiro e usa o "rabo" da coleta anterior para nao duplicar.
+            if (@($Rotated).Count -gt 0) { Add-Warning "$Source`: $Path girou e o arquivo anterior nao foi achado - pode haver lacuna." }
+            [void]$chunks.Add(@{ Path = $Path; From = [int64]0; Dedupe = $true })
+        }
+    }
+    $newOff = [int64]0
+    $kept = New-Object System.Collections.ArrayList
+    foreach ($c in $chunks) {
+        $r = Invoke-Ssh @('get', $c.Path, "$($c.From)") $TmpFile
+        if ($r.Code -ne 0) { Add-Warning "$Source`: o pfSense recusou ler $($c.Path) ($($r.Err)) - rode o script de permissoes no pfSense."; return }
+        $used = Complete-Lines $TmpFile
+        if ($c.Dedupe) {
+            $all = @([IO.File]::ReadAllLines($TmpFile, (New-Object Text.UTF8Encoding($false))) | Where-Object { $_ })
+            $sel = Select-NewLines $all $key 0 $false
+            Save-Lines $Category $sel.New $Source
+            if ($KeepLines) { foreach ($x in $sel.New) { [void]$kept.Add($x) } }
+        } else {
+            $k = Save-LinesFromFile $Category $TmpFile $Source $key $KeepLines
+            foreach ($x in $k) { [void]$kept.Add($x) }
+        }
+        if ($c.Path -eq $Path) { $newOff = $c.From + $used }
+    }
+    Set-PosState $Path $cur.Sig $newOff
+    if ($KeepLines -and $kept.Count -gt 0) { Add-VisitorRecords ([string[]]$kept.ToArray()) }
+}
+
+function Get-SuricataNames {
+    # suricata_<interface real><uuid> -> nome da interface (LAN, VISITANTES), pelo config.xml do ultimo backup.
+    $map = @{}
+    try {
+        $bk = @(Get-ChildItem (Join-Path $BaseDir "backups\$Name") -Filter "config-$Name-*.xml" -File -ErrorAction Stop |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+        if ($bk.Count -eq 0) { return $map }
+        $x = New-Object Xml.XmlDocument; $x.Load($bk[0].FullName)
+        foreach ($r in @($x.pfsense.installedpackages.suricata.rule)) {
+            if ($null -eq $r -or $r -is [string]) { continue }
+            $ifk = [string]$r.interface; $i = $x.pfsense.interfaces.$ifk
+            if ($null -eq $i -or $i -is [string]) { continue }
+            $map["suricata_$($i.if)$($r.uuid)"] = [string]$i.descr
+        }
+    } catch {}
+    return $map
+}
+
+function Save-DhcpLeases([string]$Text) {
+    # dhcpd.leases do ISC DHCP -> CSV do dia com cada concessao vista (sem repetir).
+    $now = Get-Date
+    $dir = Join-Path $LogRoot (Join-Path 'dhcp-concessoes' (Join-Path $now.ToString('yyyy') $now.ToString('MM')))
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+    $arq = Join-Path $dir ($now.ToString('yyyy-MM-dd') + '.csv')
+    $enc = New-Object Text.UTF8Encoding($true)
+    $vistos = @{}
+    if (Test-Path $arq) { foreach ($l in [IO.File]::ReadAllLines($arq, $enc)) { $p_ = $l.IndexOf(';'); if ($p_ -ge 0) { $vistos[$l.Substring($p_ + 1)] = 1 } } }
+    else { [IO.File]::WriteAllText($arq, "coletado;ip;mac;nome;inicio;fim;estado`r`n", $enc) }
+    $n = 0
+    foreach ($m in [regex]::Matches($Text, '(?s)lease\s+(\S+)\s*\{(.*?)\}')) {
+        $b = $m.Groups[2].Value
+        $g = { param($re) $x = [regex]::Match($b, $re); if ($x.Success) { $x.Groups[1].Value } else { '' } }
+        $vals = @($m.Groups[1].Value, (& $g 'hardware ethernet ([0-9a-fA-F:]+)'), (& $g 'client-hostname "([^"]*)"'),
+                  (& $g 'starts \d+ ([^;]+);'), (& $g 'ends \d+ ([^;]+);'), (& $g '(?m)^\s*binding state (\w+);')) |
+                ForEach-Object { ([string]$_) -replace '[;\r\n]', ' ' }
+        $chave = $vals -join ';'
+        if ($vistos.ContainsKey($chave)) { continue }
+        [IO.File]::AppendAllText($arq, ($now.ToString('HH:mm') + ';' + $chave + "`r`n"), $enc)
+        $vistos[$chave] = 1; $n++
+    }
+    if ($n -gt 0) { $script:Counts['dhcp-concessoes'] = $n }
+}
+
+function Collect-Ssh {
+    $list = Get-SshList
+    $byPath = @{}; foreach ($e in $list) { $byPath[$e.Path] = $e }
+    foreach ($nm in $SshSyslog.Keys) {
+        $src = $SshSyslog[$nm]
+        if ($sources -notcontains $src) { continue }
+        $re1 = '^/var/log/' + [regex]::Escape($nm) + '\.log\.\d+(\.bz2)?$'
+        $re2 = '^/var/log/arquivo/' + [regex]::Escape($nm) + '-\d{8}-\d{6}(-\d+)?(\.bz2)?$'
+        $rot = @($list | Where-Object { $_.Path -match $re1 -or $_.Path -match $re2 })
+        try { Sync-SshLog $src $CategoryDir[$src] "/var/log/$nm.log" $byPath $rot ($src -eq 'portal') }
+        catch { if ($script:NoRetry) { throw }; Add-Warning "$src`: $($_.Exception.Message)" }
+    }
+    if ($sources -contains 'pfblockerng') {
+        foreach ($f in $PfbFiles) {
+            $p = "/var/log/pfblockerng/$f"
+            try { Sync-SshLog 'pfblockerng' (Join-Path 'pfblockerng' ($f -replace '\.log$', '')) $p $byPath @() $false }
+            catch { if ($script:NoRetry) { throw }; Add-Warning "pfblockerng: $($_.Exception.Message)" }
+        }
+    }
+    if ($sources -contains 'suricata') {
+        $nomes = Get-SuricataNames
+        foreach ($e in @($list | Where-Object { $_.Path -match '^/var/log/suricata/(suricata_[^/]+)/(alerts|block)\.log$' })) {
+            $m = [regex]::Match($e.Path, '^/var/log/suricata/(suricata_[^/]+)/(alerts|block)\.log$')
+            $ifn = $nomes[$m.Groups[1].Value]; if (-not $ifn) { $ifn = $m.Groups[1].Value -replace '^suricata_', '' }
+            $cat = Join-Path 'suricata' (Join-Path (ConvertTo-FolderName $ifn) $SuricataDir[$m.Groups[2].Value])
+            $rot = @($list | Where-Object { $_.Path.StartsWith($e.Path + '.') })
+            try { Sync-SshLog 'suricata' $cat $e.Path $byPath $rot $false }
+            catch { if ($script:NoRetry) { throw }; Add-Warning "suricata: $($_.Exception.Message)" }
+        }
+    }
+    foreach ($par in @(@('squidguard', '/var/squidGuard/log/block.log'), @('squid', '/var/squid/logs/access.log'))) {
+        if ($sources -notcontains $par[0]) { continue }
+        $rot = @($list | Where-Object { $_.Path.StartsWith($par[1] + '.') })
+        try { Sync-SshLog $par[0] $CategoryDir[$par[0]] $par[1] $byPath $rot $false }
+        catch { if ($script:NoRetry) { throw }; Add-Warning "$($par[0]): $($_.Exception.Message)" }
+    }
+    if ($sources -contains 'dhcp-concessoes' -and $byPath.ContainsKey('/var/dhcpd/var/db/dhcpd.leases')) {
+        $r = Invoke-Ssh @('get', '/var/dhcpd/var/db/dhcpd.leases', '0') $TmpFile
+        if ($r.Code -eq 0) { Save-DhcpLeases (Read-Text $TmpFile) }
+    }
+}
+
+function Test-SshAccess {
+    # Modo -CheckOnly com SSH: a chave entra, lista os logs e NAO executa outro comando.
+    $list = Get-SshList
+    $faltam = @()
+    $alvo = @{ 'sistema' = '^/var/log/system\.log$'; 'autenticacao' = '^/var/log/auth\.log$'; 'portal' = '^/var/log/portalauth\.log$'
+               'openvpn' = '^/var/log/openvpn\.log$'; 'ipsec' = '^/var/log/ipsec\.log$'; 'dhcp' = '^/var/log/dhcpd\.log$'
+               'dns' = '^/var/log/resolver\.log$'; 'gateways' = '^/var/log/gateways\.log$'; 'ppp' = '^/var/log/ppp\.log$'
+               'firewall' = '^/var/log/filter\.log$'; 'pfblockerng' = '^/var/log/pfblockerng/'; 'suricata' = '^/var/log/suricata/'
+               'squid' = '^/var/squid/logs/access\.log$'; 'squidguard' = '^/var/squidGuard/log/block\.log$'
+               'dhcp-concessoes' = '^/var/dhcpd/var/db/dhcpd\.leases$' }
+    foreach ($s in $sources) {
+        if (-not $alvo.ContainsKey($s)) { continue }
+        $n = @($list | Where-Object { $_.Path -match $alvo[$s] }).Count
+        if ($n -gt 0) { Write-Log "  OK      $s ($n arquivo(s))" }
+        else { Write-Log "  FALTA   $s  -> nao encontrado ou sem permissao de leitura (rode o script de permissoes no pfSense; ou o pacote nao esta instalado)"; $faltam += $s }
+    }
+    $r = Invoke-Ssh @('id') $TmpFile
+    if ((Read-Text $TmpFile) -match 'uid=' -or $r.Code -eq 0) {
+        Stop-Permanent "a chave SSH NAO esta travada: o pfSense executou um comando qualquer ('id'). Cole no pfSense exatamente a linha gerada pelo instalador (comeca com restrict,from=...,command=...)."
+    }
+    Write-Log '  OK      chave travada: comando fora da lista foi recusado'
+    return , $faltam
+}
+
 function Test-Access {
     # Modo -CheckOnly: confere cada fonte pedida e que o usuario nao e administrador.
     $faltam = @()
@@ -674,6 +1035,14 @@ function Remove-OldLogs {
 }
 
 function Invoke-LogCollection {
+    if ($transport -eq 'ssh') {
+        if ($CheckOnly) { return (Test-SshAccess) }
+        Collect-Ssh
+        if ($cfg.LightSquidUrl) {
+            try { Collect-LightSquid } catch { if ($script:NoRetry) { throw }; Add-Warning "lightsquid: $($_.Exception.Message)" }
+        }
+        return $null
+    }
     Connect-PfSense
     try {
         if ($CheckOnly) { return (Test-Access) }
@@ -727,9 +1096,11 @@ try {
     $port     = if ($cfg.Port)           { [int]$cfg.Port }           else { 443 }
     $timeout  = if ($cfg.ConnectTimeout) { [int]$cfg.ConnectTimeout } else { 15 }
     $maxTime  = if ($cfg.LogMaxTime)     { [int]$cfg.LogMaxTime }     else { 600 }
-    $lines    = if ($cfg.LogLines)       { [int]$cfg.LogLines }       else { 5000 }
+    $lines    = if ($cfg.LogLines)       { [int]$cfg.LogLines }       else { 10000 }
     $keepDays = if ($cfg.LogKeepDays)    { [int]$cfg.LogKeepDays }    else { 400 }
+    $transport = 'web'; if ([string]$cfg.LogTransport -eq 'ssh') { $transport = 'ssh' }
     $sources  = $DefaultSources
+    if ($transport -eq 'ssh') { $sources = $SshDefaultSources }
     if ($cfg.LogSources) { $sources = @(([string]$cfg.LogSources) -split '[,; ]+' | Where-Object { $_ } | ForEach-Object { $_.Trim().ToLower() }) }
 
     $script:Curl = if ($cfg.CurlPath) { [string]$cfg.CurlPath } else { Join-Path $env:SystemRoot 'System32\curl.exe' }
@@ -741,10 +1112,23 @@ try {
     if ($cfg.PubKeyPin) { $script:Tls += @('--pinnedpubkey', [string]$cfg.PubKeyPin) }
     else { Write-Log 'AVISO: perfil sem PubKeyPin - a identidade do pfSense NAO e verificada.' }
 
+    if ($transport -eq 'ssh') {
+        $sshPort = if ($cfg.SshPort) { [int]$cfg.SshPort } else { 22 }
+        $sshUser = if ($cfg.SshUser) { [string]$cfg.SshUser } else { [string]$cfg.User }
+        $script:Ssh = [string]$cfg.SshPath
+        if (-not $script:Ssh) {
+            foreach ($c in @((Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe'), (Join-Path $BaseDir 'bin\OpenSSH\ssh.exe'))) { if (Test-Path $c) { $script:Ssh = $c; break } }
+        }
+        if (-not $script:Ssh -or -not (Test-Path $script:Ssh)) { throw "ssh.exe nao encontrado (rode o instalador: ele oferece baixar o OpenSSH oficial da Microsoft)." }
+        if (-not (Test-Path $SshKeyFile)) { throw "chave SSH nao encontrada: $SshKeyFile (rode o instalador)." }
+        if (-not (Test-Path $KnownHosts)) { throw "chave do pfSense nao fixada: $KnownHosts (rode o instalador)." }
+    }
     $key  = [byte[]](Get-Content $KeyFile -Encoding Byte)
     $pass = Read-Secret $PassFile $key
     $base = "https://$($cfg.Host):$port"
-    Write-Log "Iniciando $(if ($CheckOnly) { 'verificacao dos logs' } else { 'coleta de logs' }) - $base - usuario '$($cfg.User)' - fontes: $($sources -join ', ')"
+    $via = "$base - usuario '$($cfg.User)'"
+    if ($transport -eq 'ssh') { $via = "ssh://$sshUser@$($cfg.Host):$sshPort (chave travada)" }
+    Write-Log "Iniciando $(if ($CheckOnly) { 'verificacao dos logs' } else { 'coleta de logs' }) - $via - fontes: $($sources -join ', ')"
 
     $faltam = Invoke-LogCollection
     $pass = $null

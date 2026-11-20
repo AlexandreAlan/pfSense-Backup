@@ -84,7 +84,7 @@ Cenario 'grava cada fonte na sua pasta, por dia' {
     $script:CookieJar = Join-Path $WorkDir ('c_' + [guid]::NewGuid().ToString('N'))
     [void](Invoke-LogCollection)
     $esp = @{ 'sistema' = 5; 'vpn-openvpn' = 10; 'portal-visitantes' = 3; 'dhcp' = 3; 'firewall' = 4
-              'pfblockerng/ip_block' = 3; 'suricata/LAN_igb0-alerts' = 2; 'squid-acessos' = 3; 'squidguard-bloqueios' = 2 }
+              'pfblockerng/ip_block' = 3; 'suricata/LAN/alertas' = 2; 'squid-acessos' = 3; 'squidguard-bloqueios' = 2 }
     foreach ($k in $esp.Keys) {
         $n = Linhas (ArqDia $k)
         if ($n -ne $esp[$k]) { throw "$k`: $n linha(s) (esperado $($esp[$k])) em $(ArqDia $k)" }
@@ -142,6 +142,116 @@ Cenario 'mais linhas que o pedido vira AVISO de lacuna' {
     [void](Invoke-LogCollection)
     if (-not @($script:Warnings | Where-Object { $_ -match 'openvpn.*lacuna' })) { throw "sem aviso de lacuna: $($script:Warnings -join ' | ')" }
     '(aviso gerado)'
+}
+
+# ------------------------------------------------------------ modo SSH
+Write-Host '13) Modo SSH (chave travada, comando forcado de verdade)'
+$sw = Join-Path $WorkDir 'ssh'; $root = Join-Path $sw 'pfsense'
+foreach ($d in @('var/log/arquivo', 'var/log/pfblockerng', 'var/log/suricata/suricata_igb033667', 'var/squidGuard/log', 'var/dhcpd/var/db', 'secrets', 'backups/SSHT')) {
+    New-Item -ItemType Directory -Force (Join-Path $root $d), (Join-Path $sw $d) | Out-Null
+}
+function Hoje([int]$seg) { $d = (Get-Date).AddSeconds(-$seg); return ($d.ToString('MMM ', [Globalization.CultureInfo]::InvariantCulture) + $d.Day.ToString().PadLeft(2) + $d.ToString(' HH:mm:ss')) }
+function Escreve([string]$Rel, [string[]]$Linhas, [switch]$Acrescenta) {
+    $f = Join-Path $root $Rel; $t = ($Linhas -join "`n") + "`n"
+    if ($Acrescenta) { [IO.File]::AppendAllText($f, $t, $enc) } else { [IO.File]::WriteAllText($f, $t, $enc) }
+}
+Escreve 'var/log/system.log' @(1..4 | ForEach-Object { "$(Hoje (400 - $_)) fw php-fpm[1]: sistema $_" })
+Escreve 'var/log/auth.log' @("$(Hoje 300) fw php-fpm[2]: /index.php: Successful login for user 'admin' from: 172.16.80.2 (Local Database)")
+Escreve 'var/log/portalauth.log' @("$(Hoje 200) fw logportalauth[9]: Zone: visitantes - ACCEPT: 52998224725 Ana Souza, aa:bb:cc:00:00:01, 10.10.30.11")
+Escreve 'var/log/filter.log' @(1..6 | ForEach-Object { "$(Hoje (100 - $_)) fw filterlog[5]: 5,,,1000000103,igb0,match,block,in,4,0x0,,64,1,0,none,6,tcp,60,10.0.0.$_,8.8.8.8,5000,443,0,S,1,,64240,,mss" })
+Escreve 'var/log/pfblockerng/ip_block.log' @('Nov 20 10:00:01,a', 'Nov 20 10:00:02,b', 'Nov 20 10:00:03,c')
+Escreve 'var/log/suricata/suricata_igb033667/alerts.log' @("$((Get-Date).ToString('MM/dd/yyyy-HH:mm:ss')).1  [**] [1:1:1] ET teste [**] {TCP} 1.2.3.4:1 -> 172.16.10.5:80")
+Escreve 'var/squidGuard/log/block.log' @("$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) [1] Request(default/adult/-) http://x.com/ 172.16.10.9/- - GET REDIRECT")
+Escreve 'var/dhcpd/var/db/dhcpd.leases' @('lease 172.16.10.50 {', '  starts 4 2026/11/20 13:00:01;', '  ends 4 2026/11/20 15:00:01;', '  binding state active;', '  hardware ethernet aa:bb:cc:dd:ee:50;', '  client-hostname "PC-RH";', '}')
+Escreve 'backups/SSHT/config-SSHT-2026-11-20_0300.xml' @('<?xml version="1.0"?><pfsense><interfaces><lan><if>igb0</if><descr>LAN</descr></lan></interfaces><installedpackages><suricata><rule><interface>lan</interface><uuid>33667</uuid></rule></suricata></installedpackages></pfsense>')
+Copy-Item (Join-Path $root 'backups/SSHT/config-SSHT-2026-11-20_0300.xml') (Join-Path $sw 'backups/SSHT/')
+
+. (Join-Path $repo 'Logs-pfSense.ps1') -Name 'SSHT' -BaseDir $sw
+$forced = Join-Path $sw 'forced.sh'
+[IO.File]::WriteAllText($forced, (New-ForcedCommand $root), $enc)
+$env:FAKE_FORCED = $forced
+$script:Ssh = Join-Path $PSScriptRoot 'fake_ssh.sh'
+$cfg = [pscustomobject]@{ User = 'srvbackup-pfsense'; Host = '127.0.0.1'; LightSquidUrl = '' }
+$transport = 'ssh'; $sshPort = 22; $sshUser = 'srvbackup-pfsense'; $timeout = 5; $keepDays = 400
+$sources = $SshDefaultSources
+New-Item -ItemType Directory -Force $StateDir, $LogDir | Out-Null
+function ArqSsh([string]$Cat) { $d = Get-Date; return (Join-Path $sw "logs-pfsense/SSHT/$Cat/$($d.ToString('yyyy'))/$($d.ToString('MM'))/$($d.ToString('yyyy-MM-dd')).log") }
+
+Cenario 'a trava recusa tudo que nao for list/get/sig dos logs' {
+    $tentativas = @('id', 'list x', 'get /etc/passwd 0', "get $root/var/log/../../../etc/passwd 0", "get $root/var/log/system.log 0;id",
+                    "get $root/var/log/system.log abc", "sig /etc/passwd", 'get', "get $root/var/log/nginx.log 0")
+    foreach ($t in $tentativas) {
+        $r = Invoke-Ssh ($t -split ' ') $TmpFile
+        $out = Read-Text $TmpFile
+        if ($r.Code -ne 2 -or $out -match 'root:|uid=|sistema') { throw "'$t' deveria ser recusado (exit $($r.Code), saida: $out)" }
+    }
+    "($($tentativas.Count) tentativas recusadas)"
+}
+$CheckOnly = $true
+Cenario '-CheckOnly: encontra as fontes e confirma que a chave esta travada' {
+    $f = @(Invoke-LogCollection)
+    $esperado = @('openvpn', 'ipsec', 'dhcp', 'dns', 'gateways', 'squid')   # arquivos que nao existem no pfSense simulado
+    if ((@($f | Sort-Object) -join ',') -ne (@($esperado | Sort-Object) -join ',')) { throw "faltando: [$($f -join ',')]" }
+    '(fontes conferidas, chave travada)'
+}
+Cenario '-CheckOnly reprova uma chave SEM trava' {
+    [IO.File]::WriteAllText($forced, '/bin/sh -c "$SSH_ORIGINAL_COMMAND"', $enc)
+    try { Invoke-LogCollection | Out-Null; throw 'deveria reprovar' } catch { if ($_.Exception.Message -notmatch 'NAO esta travada') { throw $_ } }
+    [IO.File]::WriteAllText($forced, (New-ForcedCommand $root), $enc); $script:NoRetry = $false
+    '(reprovada)'
+}
+$CheckOnly = $false
+
+Cenario 'primeira coleta: tudo, inclusive firewall e autenticacao' {
+    $script:Warnings.Clear(); $script:Counts.Clear()
+    Invoke-LogCollection | Out-Null
+    $esp = @{ 'sistema' = 4; 'autenticacao' = 1; 'portal-visitantes' = 1; 'firewall' = 6; 'pfblockerng/ip_block' = 3; 'suricata/LAN/alertas' = 1; 'squidguard-bloqueios' = 1 }
+    foreach ($k in $esp.Keys) {
+        $n = Linhas (ArqSsh $k)
+        if ($n -ne $esp[$k]) { throw "$k`: $n linha(s) (esperado $($esp[$k]))" }
+    }
+    $d = Get-Date
+    $csv = Join-Path $sw "visitantes/SSHT/$($d.ToString('yyyy'))/acessos-$($d.ToString('yyyy-MM')).csv"
+    if (-not (Select-String -Path $csv -Pattern ';ACCEPT;52998224725;Ana Souza;' -Quiet)) { throw 'planilha de visitantes sem a Ana' }
+    $lease = Join-Path $sw "logs-pfsense/SSHT/dhcp-concessoes/$($d.ToString('yyyy'))/$($d.ToString('MM'))/$($d.ToString('yyyy-MM-dd')).csv"
+    if (-not (Select-String -Path $lease -Pattern ';172\.16\.10\.50;aa:bb:cc:dd:ee:50;PC-RH;' -Quiet)) { throw 'concessao DHCP nao gravada' }
+    if ($script:Warnings.Count -gt 0) { throw "avisos inesperados: $($script:Warnings -join ' | ')" }
+    "($($esp.Count) fontes + planilha + DHCP)"
+}
+Cenario 'so os bytes novos, inclusive linha incompleta' {
+    Escreve 'var/log/filter.log' @("$(Hoje 5) fw filterlog[5]: nova 1", "$(Hoje 4) fw filterlog[5]: nova 2") -Acrescenta
+    [IO.File]::AppendAllText((Join-Path $root 'var/log/filter.log'), "$(Hoje 3) fw filterlog[5]: pela metade", $enc)   # sem \n
+    Invoke-LogCollection | Out-Null
+    if ((Linhas (ArqSsh 'firewall')) -ne 8) { throw "firewall: $(Linhas (ArqSsh 'firewall')) (esperado 8: a linha pela metade fica para depois)" }
+    [IO.File]::AppendAllText((Join-Path $root 'var/log/filter.log'), " - completa`n", $enc)
+    Invoke-LogCollection | Out-Null
+    $ult = @([IO.File]::ReadAllLines((ArqSsh 'firewall'), $enc))[-1]
+    if ((Linhas (ArqSsh 'firewall')) -ne 9 -or $ult -notmatch 'pela metade - completa$') { throw "linha incompleta mal tratada: $ult" }
+    '(+2, depois +1 completa)'
+}
+Cenario 'log girou (arquivado em .bz2): termina o antigo e le o novo, sem perder nem duplicar' {
+    Escreve 'var/log/filter.log' @("$(Hoje 2) fw filterlog[5]: antes de girar") -Acrescenta
+    $arq = Join-Path $root 'var/log/arquivo/filter-20261120-110000'
+    Move-Item (Join-Path $root 'var/log/filter.log') $arq
+    & bzip2 $arq
+    Escreve 'var/log/filter.log' @("$(Hoje 1) fw filterlog[5]: depois de girar 1", "$(Hoje 0) fw filterlog[5]: depois de girar 2")
+    Invoke-LogCollection | Out-Null
+    $n = Linhas (ArqSsh 'firewall')
+    if ($n -ne 12) { throw "firewall: $n linha(s) (esperado 12)" }
+    if (@($script:Warnings | Where-Object { $_ -match 'lacuna' }).Count) { throw "nao deveria haver lacuna: $($script:Warnings -join ' | ')" }
+    '(1 do antigo + 2 do novo)'
+}
+Cenario 'arquivo reescrito no lugar (pfBlockerNG) nao duplica' {
+    Escreve 'var/log/pfblockerng/ip_block.log' @('Nov 20 10:00:02,b', 'Nov 20 10:00:03,c', 'Nov 20 10:00:04,d')
+    Invoke-LogCollection | Out-Null
+    if ((Linhas (ArqSsh 'pfblockerng/ip_block')) -ne 4) { throw "pfblockerng: $(Linhas (ArqSsh 'pfblockerng/ip_block')) (esperado 4)" }
+    '(+1)'
+}
+Cenario 'linha da chave para o pfSense: travas e aspas escapadas' {
+    $l = Get-AuthorizedKeyLine 'ssh-ed25519 AAAAC3NzaTESTE pfSense-Backup' '172.16.10.7'
+    if ($l -notmatch '^restrict,from="172\.16\.10\.7",command="/bin/sh -c ''.*'' ssh-ed25519 AAAAC3NzaTESTE pfSense-Backup$') { throw "formato: $l" }
+    if ($l -match '[^\\]"[^ ]*\$1') { throw 'aspas do comando nao escapadas' }
+    "($($l.Length) caracteres)"
 }
 
 # ----------------------------------------------------------- auditoria
