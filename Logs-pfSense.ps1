@@ -934,6 +934,16 @@ function Sync-SshLog([string]$Source, [string]$Category, [string]$Path, $ByPath,
     if ($KeepLines -and $kept.Count -gt 0) { Add-VisitorRecords ([string[]]$kept.ToArray()) }
 }
 
+function Get-XmlText($Node, [string]$Child) {
+    # Valor de um filho do config.xml como texto. Campo gravado como CDATA (comum no
+    # descr) volta como XmlElement no PowerShell: [string] daria "System.Xml.XmlElement".
+    if ($null -eq $Node -or $Node -is [string]) { return '' }
+    $v = $Node.$Child
+    if ($null -eq $v) { return '' }
+    if ($v -is [Xml.XmlElement]) { return $v.InnerText.Trim() }
+    return ([string]$v).Trim()
+}
+
 function Get-SuricataNames {
     # suricata_<interface real><uuid> -> nome da interface (LAN, VISITANTES), pelo config.xml do ultimo backup.
     $map = @{}
@@ -944,9 +954,11 @@ function Get-SuricataNames {
         $x = New-Object Xml.XmlDocument; $x.Load($bk[0].FullName)
         foreach ($r in @($x.pfsense.installedpackages.suricata.rule)) {
             if ($null -eq $r -or $r -is [string]) { continue }
-            $ifk = [string]$r.interface; $i = $x.pfsense.interfaces.$ifk
+            $ifk = Get-XmlText $r 'interface'; if (-not $ifk) { continue }
+            $i = $x.pfsense.interfaces.$ifk
             if ($null -eq $i -or $i -is [string]) { continue }
-            $map["suricata_$($i.if)$($r.uuid)"] = [string]$i.descr
+            $nome = Get-XmlText $i 'descr'; if (-not $nome) { $nome = $ifk.ToUpper() }
+            $map["suricata_$(Get-XmlText $i 'if')$(Get-XmlText $r 'uuid')"] = $nome
         }
     } catch {}
     return $map

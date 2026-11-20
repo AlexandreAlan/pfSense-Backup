@@ -218,7 +218,7 @@ $LogsTaskName = "pfSense Logs - $Name"
 $SshKeyFile   = Join-Path $SecDir  "$Name.ssh_ed25519"
 $KnownHosts   = Join-Path $SecDir  "$Name.known_hosts"
 $KeyLineFile  = Join-Path $CfgDir  "$Name-chave-ssh-pfsense.txt"
-$ToolVersion   = '2.1.2'   # versao do pfSense-Backup
+$ToolVersion   = '2.1.3'   # versao do pfSense-Backup
 $SchemaVersion = 3         # versao do formato do config\<Nome>.json (1 = sem o campo; 3 = logs pelo SSH)
 $DefaultLogSources = 'sistema,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes'
 $DefaultSshSources = 'sistema,autenticacao,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes'
@@ -368,13 +368,25 @@ if (Test-Path $CfgFile) { $existing = Get-Content $CfgFile -Raw | ConvertFrom-Js
 $oldSchema = 0
 if ($existing) { $oldSchema = 1; if ($existing.SchemaVersion) { $oldSchema = [int]$existing.SchemaVersion } }
 $upgrading = ($oldSchema -ge 1 -and $oldSchema -lt $SchemaVersion)
+# Versao de correcao (mesmo formato de perfil, programa mais novo): atualiza sem perguntar nada.
+$oldTool = ''; if ($existing -and $existing.ToolVersion) { $oldTool = [string]$existing.ToolVersion }
+$patching = $false
+if (-not $upgrading -and $oldSchema -eq $SchemaVersion -and $oldTool) {
+    try { $patching = ([version]$oldTool -lt [version]$ToolVersion) } catch { $patching = $false }
+}
 if ($upgrading) {
     Step "Atualizacao: perfil '$Name' da versao $oldSchema encontrado -> versao $SchemaVersion ($ToolVersion)"
     Ok 'mantidos sem perguntar: firewall, porta, usuario, chave, senha, certificado fixado, horario, retencao e tarefa do backup'
     Ok 'sera feito: copiar os scripts novos, completar o config JSON e perguntar SO o que e novo (logs e relatorio)'
+} elseif ($patching) {
+    Step "Atualizacao: pfSense-Backup $oldTool -> $ToolVersion (perfil '$Name', mesmo formato: versao $oldSchema)"
+    Ok 'mantidos sem perguntar: TODOS os valores do perfil (firewall, portas, horario, retencao, logs, SSH, chaves e senhas)'
+    Ok 'sera feito: copiar os scripts novos, recriar as tarefas e testar. Para mudar algum valor, rode de novo depois (ai ele pergunta)'
 } elseif ($existing) {
     Ok "perfil '$Name' ja esta na versao $oldSchema - reconfigurando (ENTER mantem cada valor)"
 }
+# Sem perguntas: atualizacao de formato (so pergunta o que e novo) ou de correcao.
+$quiet = $upgrading -or $patching
 if (-not $FwHost -and $existing) { $FwHost = $existing.Host }
 if (-not $PSBoundParameters.ContainsKey('User')       -and $existing -and $existing.User)     { $User     = $existing.User }
 if (-not $PSBoundParameters.ContainsKey('Port')       -and $existing -and $existing.Port)     { $Port     = [int]$existing.Port }
@@ -394,7 +406,7 @@ if ($User -in @('admin', 'root')) {
 # porta nao veio na linha de comando (-Port), pergunta mostrando o padrao entre
 # colchetes: 443 num cadastro novo, ou a porta ja salva no perfil. ENTER mantem.
 # Com -Port ou -Yes nao pergunta nada (bom para automacao).
-if (-not $PSBoundParameters.ContainsKey('Port') -and -not $Yes -and -not $upgrading) {
+if (-not $PSBoundParameters.ContainsKey('Port') -and -not $Yes -and -not $quiet) {
     Write-Host ''
     Write-Host '  PORTA DA WebGUI DO pfSENSE' -ForegroundColor Yellow
     Write-Host '  --------------------------'
@@ -425,7 +437,7 @@ function Read-Valor([string]$Rotulo, [string]$Atual, [scriptblock]$Valido, [stri
         Warn $Ajuda
     }
 }
-$perguntaAgenda = -not $Yes -and -not $upgrading -and -not ($PSBoundParameters.ContainsKey('Time') -and
+$perguntaAgenda = -not $Yes -and -not $quiet -and -not ($PSBoundParameters.ContainsKey('Time') -and
                   $PSBoundParameters.ContainsKey('KeepDays') -and $PSBoundParameters.ContainsKey('MinKeep'))
 if ($perguntaAgenda) {
     Write-Host ''
@@ -568,7 +580,7 @@ if ($LightSquidUrl -and $logsOn) { Ok "LightSquid: $LightSquidUrl" }
 if ($reportOn) { Ok 'relatorio de auditoria: ligado (auditoria\<Nome>\ a cada backup que muda a configuracao)' }
 
 # ---------------------- 0. pre-requisito no pfSense -------------------
-if (-not $Yes -and -not $upgrading -and (-not $existing -or $UpdatePassword -or $PSBoundParameters.ContainsKey('User'))) {
+if (-not $Yes -and -not $quiet -and (-not $existing -or $UpdatePassword -or $PSBoundParameters.ContainsKey('User'))) {
     Write-Host ''
     Write-Host '  PRE-REQUISITO NO pfSense (obrigatorio)' -ForegroundColor Yellow
     Write-Host '  ---------------------------------------'
@@ -868,6 +880,7 @@ if ($wc) {
 }
 
 # ------------- 5b. chave SSH e chave do pfSense (logs pelo SSH) -------------
+$linhaAntiga = ''; $chaveIgual = $false
 if ($logsOn -and $transport -eq 'ssh') {
     Step 'Chave SSH deste servidor'
     if (-not (Test-Path $SshKeyFile)) {
@@ -908,7 +921,20 @@ if ($logsOn -and $transport -eq 'ssh') {
 
     $linha = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsEngine -Name $Name -BaseDir $BaseDir -PrintKeyFor "$SshKeyFile.pub" -KeyFrom $SshFrom) -join ''
     if ($linha -notmatch '^restrict,from=') { throw "nao consegui montar a linha da chave: $linha" }
+    $linhaAntiga = ''
+    if (Test-Path $KeyLineFile) { $linhaAntiga = ([string](Get-Content $KeyLineFile -Raw)).Trim() }
     Set-Content -Path $KeyLineFile -Value $linha -Encoding ASCII
+    $chaveIgual = ($linhaAntiga -and $linhaAntiga -eq $linha.Trim() -and $existing -and [string]$existing.LogTransport -eq 'ssh')
+}
+if ($logsOn -and $transport -eq 'ssh' -and $chaveIgual) {
+    Ok 'linha da chave no pfSense: nao mudou nesta versao, nada a fazer no pfSense'
+} elseif ($logsOn -and $transport -eq 'ssh') {
+    if ($linhaAntiga) {
+        Write-Host ''
+        Write-Host '  ATENCAO: A LINHA DA CHAVE MUDOU NESTA VERSAO' -ForegroundColor Red
+        Write-Host '  Troque a linha antiga pela nova no pfSense (passo 1 abaixo). Ate trocar,'
+        Write-Host '  a verificacao dos logs falha - o backup continua normal.'
+    }
     Write-Host ''
     Write-Host '  PRE-REQUISITO DOS LOGS PELO SSH NO pfSense' -ForegroundColor Yellow
     Write-Host '  -----------------------------------------'
