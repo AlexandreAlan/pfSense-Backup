@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<pfsense>
+	<version>23.3</version>
+	<system>
+		<hostname>fw-exemplo</hostname>
+		<domain>exemplo.local</domain>
+		<timezone>America/Fortaleza</timezone>
+		<webgui><protocol>https</protocol><port>10443</port></webgui>
+		<ssh><enable>enabled</enable><port>22</port></ssh>
+		<group><name>admins</name><description>Admins</description><member>0</member><member>2000</member><priv>page-all</priv></group>
+		<group><name>BACKUP-PFSENSE</name><member>2001</member><priv>page-diagnostics-backup-restore</priv></group>
+		<user><name>admin</name><uid>0</uid><scope>system</scope><bcrypt-hash>$2y$10$SEGREDOHASHADMIN</bcrypt-hash><priv>user-shell-access</priv></user>
+		<user><name>joao.antigo</name><uid>2000</uid><descr>Joao</descr><bcrypt-hash>$2y$10$SEGREDOHASHJOAO</bcrypt-hash></user>
+		<user><name>srvbackup-pfsense</name><uid>2001</uid><bcrypt-hash>$2y$10$SEGREDOHASHBKP</bcrypt-hash></user>
+		<dnsserver>1.1.1.1</dnsserver>
+	</system>
+	<interfaces>
+		<wan><enable></enable><if>igb1</if><descr>WAN</descr><ipaddr>dhcp</ipaddr></wan>
+		<lan><enable></enable><if>igb0</if><descr>LAN</descr><ipaddr>192.168.1.1</ipaddr><subnet>24</subnet></lan>
+	</interfaces>
+	<filter>
+		<rule><tracker>100</tracker><type>pass</type><interface>lan</interface><ipprotocol>inet</ipprotocol><source><network>lan</network></source><destination><any></any></destination><descr>LAN para internet</descr></rule>
+		<rule><tracker>101</tracker><type>pass</type><interface>lan</interface><protocol>tcp</protocol><source><network>lan</network></source><destination><any></any><port>3389</port></destination><descr>RDP liberado</descr></rule>
+	</filter>
+	<aliases><alias><name>Servidores</name><type>host</type><address>192.168.1.10</address><descr>servidores</descr></alias></aliases>
+	<nat><outbound><mode>automatic</mode></outbound></nat>
+</pfsense>

@@ -403,6 +403,16 @@ try {
             }
         }
 
+        # 8) relatorio de auditoria (HTML) a partir do backup novo. Melhor esforco:
+        #    falha aqui so vira linha no log, nunca invalida o backup.
+        $rel = Join-Path $BaseDir 'Relatorio-pfSense.ps1'
+        if ($cfg.Report -ne $false -and (Test-Path $rel)) {
+            try {
+                $saida = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rel -Name $Name -BaseDir $BaseDir 2>&1
+                foreach ($l in @($saida)) { if ("$l".Trim()) { Write-Log "relatorio: $l" } }
+            } catch { Write-Log "AVISO: relatorio de auditoria falhou: $($_.Exception.Message)" }
+        }
+
         Write-Log 'Concluido.'
         $resumo = "Backup OK: $($result.File) ($([math]::Round($result.Size / 1KB, 1)) KB)$($result.Note)"
         Write-Event 1000 'Information' $resumo

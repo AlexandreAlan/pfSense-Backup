@@ -14,5 +14,16 @@
     "MaxTime":  300,
     "Retries":  3,
     "RetryDelay":  60,
-    "CurlPath":  ""
+    "CurlPath":  "",
+    "SchemaVersion":  2,
+    "ToolVersion":  "2.0.0",
+    "Report":  true,
+    "Logs":  false,
+    "LogSources":  "sistema,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes",
+    "LogEvery":  60,
+    "LogLines":  5000,
+    "LogKeepDays":  400,
+    "LogMaxTime":  600,
+    "LightSquidUrl":  "",
+    "LightSquidUser":  ""
 }

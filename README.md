@@ -8,6 +8,8 @@
 
 Backup **automático e diário** do `config.xml` de firewalls **pfSense**, feito por um servidor **Windows** da rede (normalmente o AD do cliente), pela própria WebGUI. Não instala nada no pfSense.
 
+A partir da **versão 2**, também guarda os **logs do pfSense** organizados por categoria e por dia, monta a **planilha de acessos dos visitantes** do portal cativo e gera um **relatório de auditoria** em HTML a cada mudança de configuração. Tudo pelo mesmo usuário, pela mesma senha cifrada e pelo mesmo canal HTTPS. Assim, uma auditoria deixa de ser um parto.
+
 ## Recursos
 
 - **Privilégio mínimo comprovado:** usa um usuário que só pode fazer backup, e o instalador testa isso de verdade.
@@ -18,17 +20,24 @@ Backup **automático e diário** do `config.xml` de firewalls **pfSense**, feito
 - **Vários firewalls** no mesmo servidor, cada um com seus backups, logs e status.
 - **Cópia fora do servidor** (NAS), opcional, contra perda do servidor ou ransomware.
 - **Instalação guiada e transparente:** identifica o Windows, explica cada pergunta e só baixa o curl (Server 2016) com a sua autorização.
+- **Relatório de auditoria** (v2): regras por interface, NAT, aliases, usuários e administradores, VPNs e certificados, IPsec, portal cativo, DHCP e **o que mudou** desde o backup anterior. Nunca mostra segredos. [Detalhes](docs/auditoria.md)
+- **Coleta de logs** (v2): sistema, portal de visitantes, OpenVPN, IPsec, DHCP, DNS, gateways, firewall, pfBlockerNG, Suricata, Squid/SquidGuard e LightSquid, guardados por categoria e dia, só nas datas que existem. É incremental, sem duplicar linhas. [Detalhes](docs/logs.md)
+- **Planilha de visitantes** (v2): data, hora, CPF, nome, MAC e IP de cada acesso ao portal cativo, uma planilha por mês, pronta para o Excel.
+- **Atualização sem refazer nada** (v2): rodar o instalador novo sobre a versão anterior mantém senha, certificado, horário e tarefa, e pergunta só o que é novo. [Detalhes](docs/atualizacao.md)
 
 ## Como funciona
 
 ```
- Servidor Windows (AD)                               pfSense
- ┌──────────────────────────────┐   HTTPS (WebGUI)   ┌─────────────────────┐
- │ Tarefa diária (SYSTEM)       │ ─────────────────▶ │ login               │
- │  Backup-pfSense.ps1 + curl   │ ◀───────────────── │ Diagnostics › Backup│
- │                              │     config.xml     └─────────────────────┘
- │ backups\  logs\  status\     │──▶ Zabbix
- └──────────────────────────────┘
+ Servidor Windows (AD)                                 pfSense
+ ┌────────────────────────────────┐   HTTPS (WebGUI)   ┌──────────────────────┐
+ │ Tarefa diária (SYSTEM)         │ ─────────────────▶ │ Diagnostics › Backup │
+ │  Backup-pfSense.ps1 + curl     │ ◀── config.xml ─── │                      │
+ │  └▶ Relatorio-pfSense.ps1      │                    │                      │
+ │ Tarefa de hora em hora (v2)    │ ─────────────────▶ │ Status › Logs,       │
+ │  Logs-pfSense.ps1 + curl       │ ◀── logs ───────── │ pfBlockerNG, Suricata│
+ │                                │                    │ Squid, LightSquid    │
+ │ backups\ auditoria\ logs-pfsense\ visitantes\ status\ ──▶ Zabbix          │
+ └────────────────────────────────┘                    └──────────────────────┘
 ```
 
 ## Requisitos
@@ -73,11 +82,16 @@ Cada firewall tem a sua pasta `C:\pfSense-Backup\status\<Nome>\`:
 
 No Zabbix: `vfs.file.contents["C:\pfSense-Backup\status\FWCLIENTE\status.txt"]` com trigger `="ERRO"`, e uma trigger para "sem backup bom há mais de 26 h". Itens e triggers prontos em [Monitoramento](docs/monitoramento.md).
 
+A coleta de logs tem os seus três arquivos, com o prefixo `logs-` (`logs-status.txt`, `logs-ultimo-ok.txt`, `logs-mensagem.txt`).
+
 ## Documentação
 
 | | |
 |---|---|
 | [Instalação](docs/instalacao.md) | Preparar o pfSense, rodar o instalador, validar, checklist |
+| [Atualização](docs/atualizacao.md) | Atualizar uma instalação da versão anterior sem refazer nada |
+| [Logs](docs/logs.md) | Coleta de logs, privilégios por fonte, pastas, planilha de visitantes, LightSquid |
+| [Auditoria](docs/auditoria.md) | Relatório HTML de auditoria gerado a cada mudança de configuração |
 | [Configuração](docs/configuracao.md) | Mudar horário/retenção, parâmetros, cópia externa, restaurar um backup |
 | [Monitoramento](docs/monitoramento.md) | Arquivos de status, itens e triggers do Zabbix, eventos do Windows |
 | [Segurança](docs/seguranca.md) | Como as credenciais são protegidas e o que o instalador faz no servidor |

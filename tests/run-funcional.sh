@@ -23,5 +23,12 @@ python3 "$AQUI/mock_pfsense.py" "$SENHA" "$ENC" "$PORTA" "$WORK/cert.pem" "$WORK
 MOCK=$!
 for _ in $(seq 1 50); do curl -sk -o /dev/null "https://127.0.0.1:$PORTA/stats" && break; sleep 0.2; done
 
+RC=0
 "$PWSH" -NoProfile -File "$AQUI/Test-Funcional.ps1" -Senha "$SENHA" -SenhaEnc "$ENC" \
-    -PinOpenssl "$PIN" -Porta "$PORTA" -WorkDir "$WORK"
+    -PinOpenssl "$PIN" -Porta "$PORTA" -WorkDir "$WORK" || RC=1
+
+# Versao 2: coleta de logs e relatorio de auditoria (pasta propria, mesmo mock)
+mkdir -p "$WORK/v2"
+"$PWSH" -NoProfile -File "$AQUI/Test-Logs.ps1" -Senha "$SENHA" -PinOpenssl "$PIN" \
+    -Porta "$PORTA" -WorkDir "$WORK/v2" || RC=1
+exit $RC

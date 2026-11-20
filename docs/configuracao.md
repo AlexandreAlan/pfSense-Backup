@@ -33,6 +33,10 @@ Em PowerShell como Administrador, na pasta `C:\pfSense-Backup`:
 | Adicionar outro firewall | rodar o instalador com outro `-Name` |
 | Listar perfis | `Get-ChildItem .\config\*.json` |
 | Remover um perfil (mantém backups e log) | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -Uninstall` |
+| (v2) Ligar a coleta de logs | `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE -Logs` |
+| (v2) Coletar logs agora | `schtasks /Run /TN "pfSense Logs - FWCLIENTE"` |
+| (v2) Ver o relatório de auditoria | abrir `.\auditoria\FWCLIENTE\ultimo.html` |
+| (v2) Atualizar da versão anterior | copiar os scripts novos e rodar `.\Install-pfSenseBackup.ps1 -Name FWCLIENTE` ([Atualização](atualizacao.md)) |
 
 ## Parâmetros do instalador
 
@@ -55,7 +59,15 @@ Em PowerShell como Administrador, na pasta `C:\pfSense-Backup`:
 | `-BaseDir` | `C:\pfSense-Backup` | Pasta de instalação (sem espaços) |
 | `-Yes` | — | Não pergunta nada: usa os padrões/valores salvos, aceita o certificado no 1º cadastro e autoriza baixar o curl |
 | `-NoTest` | — | Pula a verificação do usuário e o backup de teste (não recomendado) |
-| `-Uninstall` | — | Remove tarefa, JSON, segredos e status do perfil; mantém backups e log |
+| `-Uninstall` | — | Remove tarefas, JSON, segredos e status do perfil; mantém backups, logs e relatórios |
+| `-Logs` / `-NoLogs` | perguntado | (v2) Liga ou desliga a [coleta de logs](logs.md) |
+| `-LogSources` | todas | (v2) Fontes coletadas, separadas por vírgula |
+| `-LogEvery` | `60` | (v2) Minutos entre coletas |
+| `-LogLines` | `5000` | (v2) Linhas pedidas por log a cada coleta |
+| `-LogKeepDays` | `400` | (v2) Dias guardados de logs e planilhas |
+| `-LogsGroup` | `LOGS-PFSENSE` | (v2) Nome do grupo de logs, usado só nas instruções |
+| `-LightSquidUrl`, `-LightSquidUser` | vazio | (v2) LightSquid; `-UpdateLightSquidPassword` troca a senha dele |
+| `-NoReport` | — | (v2) Não gera o [relatório de auditoria](auditoria.md) |
 
 **Padrões da sua empresa:** os valores padrão ficam num bloco `PADROES` no topo do `Install-pfSenseBackup.ps1`. Edite uma vez (ex.: outro nome de usuário) e todos os cadastros novos passam a usar.
 
@@ -97,19 +109,29 @@ Criado pelo instalador. Pode ser editado à mão, e rodar o instalador de novo *
 | `MaxTime` | Tempo máximo de cada requisição, em segundos (300) |
 | `Retries`, `RetryDelay` | Novas tentativas em falha de rede (3, a cada 60 s) |
 | `CurlPath` | Caminho do curl, quando não é o do Windows |
+| `SchemaVersion`, `ToolVersion` | (v2) Versão do perfil e do pfSense-Backup. Sem o campo = versão 1 ([Atualização](atualizacao.md)) |
+| `Report` | (v2) Gera o relatório de auditoria (`true`) |
+| `Logs`, `LogSources`, `LogEvery`, `LogLines`, `LogKeepDays`, `LogMaxTime`, `LightSquidUrl`, `LightSquidUser` | (v2) [Coleta de logs](logs.md#configuração-confignomejson) |
 
 ## Estrutura no servidor
 
 ```
 C:\pfSense-Backup\
-├── Backup-pfSense.ps1           motor (roda todo dia)
-├── Install-pfSenseBackup.ps1    cadastro / alteração / remoção
+├── Backup-pfSense.ps1           motor do backup (roda todo dia)
+├── Relatorio-pfSense.ps1        (v2) relatório de auditoria, chamado pelo backup
+├── Logs-pfSense.ps1             (v2) coleta de logs (roda de hora em hora)
+├── Install-pfSenseBackup.ps1    cadastro / atualização / alteração / remoção
 ├── bin\curl.exe                 só no Server 2016 / 2012 R2
 ├── config\FWCLIENTE.json        configuração do perfil
 ├── secrets\                     chave e senha cifrada
 ├── backups\FWCLIENTE\           config-FWCLIENTE-AAAA-MM-DD_HHMM.xml
 ├── logs\FWCLIENTE\              FWCLIENTE.log (um por firewall)
-└── status\FWCLIENTE\            status.txt, ultimo-ok.txt, mensagem.txt (Zabbix)
+├── status\FWCLIENTE\            status.txt, ultimo-ok.txt, mensagem.txt (+ logs-*.txt) (Zabbix)
+├── auditoria\FWCLIENTE\         (v2) ultimo.html + AAAA\auditoria-*.html
+├── logs-pfsense\FWCLIENTE\      (v2) <categoria>\AAAA\MM\AAAA-MM-DD.log
+├── visitantes\FWCLIENTE\        (v2) AAAA\acessos-AAAA-MM.csv
+├── lightsquid\FWCLIENTE\        (v2) AAAA\MM\AAAA-MM-DD.html
+└── state\FWCLIENTE\             (v2) controle interno da coleta (onde parou)
 ```
 
 ## Restaurar um backup

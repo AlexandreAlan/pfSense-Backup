@@ -6,3 +6,10 @@ backups/
 logs/
 *.tmp
 status/
+# Versao 2: coleta de logs e auditoria (dados do cliente)
+state/
+logs-pfsense/
+visitantes/
+auditoria/
+lightsquid/
+bin/

@@ -19,7 +19,11 @@
 - **Um administrador do servidor consegue ler a chave e a senha.** A proteção é contra usuários comuns e contra o vazamento do arquivo de senha sozinho.
 - **O `config.xml` contém segredos:** hashes de senha, chaves de VPN e certificados. Fora do servidor, use `-Encrypt`.
 - **Não aponte para um pfSense pela internet.** Use o IP da LAN ou uma VPN.
-- **Nunca publique** `config\*.json`, `secrets\`, `backups\`, `logs\` ou `status\`. O `.gitignore` do repositório já bloqueia esses caminhos.
+- **Logs (versão 2):** os privilégios dos **pacotes** (pfBlockerNG, Suricata, Squid) também permitem **alterar** esses pacotes, porque o pfSense não tem "só leitura" para eles. Inclua só os que for coletar. Os privilégios dos logs do sistema são só de leitura. A verificação do instalador continua **reprovando** um usuário que acesse o gerenciador de usuários, as regras, o prompt de comandos ou a edição de arquivos.
+- **Os logs e a planilha de visitantes têm dados pessoais** (IP, navegação, nome, CPF). Eles ficam na mesma pasta travada para `SYSTEM` + `Administradores`. Combine com o cliente quem consulta e por quanto tempo guardar (`LogKeepDays`, padrão 400 dias). É a LGPD.
+- **O relatório de auditoria não mostra segredos**, mas descreve a rede inteira. Trate como documento interno.
+- **LightSquid em HTTP:** a senha do LightSquid trafega aberta na rede. Ative o SSL no pacote.
+- **Nunca publique** `config\*.json`, `secrets\`, `backups\`, `logs\`, `status\`, `state\`, `logs-pfsense\`, `visitantes\`, `auditoria\` ou `lightsquid\`. O `.gitignore` do repositório já bloqueia esses caminhos.
 
 ## O que o instalador faz no servidor
 
@@ -35,6 +39,9 @@ Tudo o que ele cria, altera ou baixa, e como desfazer:
 | Grava a configuração do perfil | `config\<Nome>.json` | `-Uninstall` |
 | Registra a origem de eventos `pfSense-Backup` | Log de Aplicativo | `Remove-EventLog -Source pfSense-Backup` |
 | Cria a tarefa diária, como `SYSTEM` | Agendador: `pfSense Backup - <Nome>` | `-Uninstall` |
+| (v2, se ligar os logs) Cria a tarefa da coleta, como `SYSTEM` | Agendador: `pfSense Logs - <Nome>` | `-NoLogs` ou `-Uninstall` |
+| (v2) Grava a senha do LightSquid cifrada, se houver | `secrets\<Nome>.lightsquid.pass` | `-Uninstall` |
+| (v2) Grava logs, planilhas e relatórios | `logs-pfsense\`, `visitantes\`, `lightsquid\`, `auditoria\`, `state\` | apagar na mão |
 | Grava log e status do Zabbix | `logs\<Nome>\`, `status\<Nome>\` | `-Uninstall` remove o status; o log fica |
 
 O instalador **não** instala programas, **não** mexe no `PATH`, **não** abre portas no firewall do Windows, **não** cria usuários no Windows e **não** altera nada no pfSense.

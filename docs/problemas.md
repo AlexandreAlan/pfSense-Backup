@@ -34,6 +34,19 @@ A mensagem aparece no log (`C:\pfSense-Backup\logs\<Nome>\<Nome>.log`), em `stat
 | `arquivo pequeno demais` | O pfSense devolveu uma página de erro | Ver o "Inicio:" na mensagem; normalmente é login ou privilégio |
 | IP do servidor bloqueado após vários erros | sshguard do pfSense | Corrigir a senha e liberar em *Diagnostics › Tables › sshguard* |
 
+## Logs (versão 2)
+
+| Mensagem | Causa provável | O que fazer |
+|---|---|---|
+| `FALTA <fonte> -> inclua no grupo: ...` | Falta o privilégio daquela fonte | Incluir no grupo `LOGS-PFSENSE` o privilégio mostrado. Lembre: `Logs: System` **não** libera os outros logs |
+| `<fonte>: sem acesso ...` no status `AVISO` | Mesmo caso, durante a coleta | Idem, ou tirar a fonte com `-LogSources` |
+| `possivel lacuna (mais de N linhas ...)` | O pfSense gerou mais linhas do que o pedido entre duas coletas | Aumentar `-LogLines` (ex.: 20000) ou diminuir `-LogEvery` (ex.: 15) |
+| `verificacao dos logs REPROVADA` | Login falhou ou o usuário ficou com privilégio administrativo | Ler a mensagem acima; o backup continua normal |
+| `lightsquid: usuario/senha do LightSquid recusados` | Senha do LightSquid mudou | `-UpdateLightSquidPassword` |
+| `outra coleta deste firewall ainda esta rodando` | A coleta anterior ainda não terminou | Normal de vez em quando; se for sempre, aumente `-LogEvery` |
+| Relatório não gerado: `configuracao nao mudou` | Nada mudou desde o backup anterior | Normal: o `ultimo.html` continua valendo. `-Force` gera mesmo assim |
+| Relatório pulado: `backup e criptografado` | Perfil com `-Encrypt` | O `.xml.enc` não pode ser lido. É esperado |
+
 ## curl
 
 | Mensagem | Causa provável | O que fazer |

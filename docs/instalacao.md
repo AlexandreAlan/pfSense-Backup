@@ -29,6 +29,8 @@ O backup usa um **usuário dedicado** que só tem permissão de backup. O instal
 
 > ⚠️ **Trate essa senha como senha de admin.** O privilégio *Backup & Restore* também permite **restaurar** uma configuração, o que dá controle total do firewall. Veja [Segurança](seguranca.md).
 
+**Logs (opcional, versão 2):** para também coletar os logs, crie o grupo `LOGS-PFSENSE` com os privilégios das fontes que você quer e coloque o **mesmo** `srvbackup-pfsense` também nele. A lista completa está em [Logs](logs.md#preparar-o-pfsense). O instalador pergunta se é para ligar a coleta e confere cada privilégio.
+
 ## 2. Liberar o acesso (se precisar)
 
 Na mesma LAN, normalmente já funciona. Se o servidor estiver em outra rede, VLAN ou VPN, crie uma regra liberando `IP do servidor → IP do pfSense : porta da WebGUI (TCP)`. Para testar:

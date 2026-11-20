@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<pfsense>
+	<version>23.3</version>
+	<system>
+		<hostname>fw-exemplo</hostname>
+		<domain>exemplo.local</domain>
+		<timezone>America/Fortaleza</timezone>
+		<webgui><protocol>https</protocol><port>10443</port><noantilockout></noantilockout></webgui>
+		<ssh><enable>enabled</enable><port>22</port></ssh>
+		<group><name>admins</name><description>Admins</description><member>0</member><member>2000</member><priv>page-all</priv></group>
+		<group><name>BACKUP-PFSENSE</name><member>2001</member><priv>page-diagnostics-backup-restore</priv></group>
+		<group><name>LOGS-PFSENSE</name><member>2001</member><priv>page-diagnostics-logs-system</priv><priv>page-status-systemlogs-openvpn</priv></group>
+		<user><name>admin</name><uid>0</uid><scope>system</scope><bcrypt-hash>$2y$10$SEGREDOHASHADMIN</bcrypt-hash><priv>user-shell-access</priv></user>
+		<user><name>joao.antigo</name><uid>2000</uid><descr>Joao</descr><disabled></disabled><bcrypt-hash>$2y$10$SEGREDOHASHJOAO</bcrypt-hash></user>
+		<user><name>srvbackup-pfsense</name><uid>2001</uid><bcrypt-hash>$2y$10$SEGREDOHASHBKP</bcrypt-hash><authorizedkeys>U0VHUkVET0NIQVZFU1NI</authorizedkeys></user>
+		<user><name>maria.vpn</name><uid>2002</uid><descr>Maria VPN</descr><bcrypt-hash>$2y$10$SEGREDOHASHMARIA</bcrypt-hash><cert>cert1</cert></user>
+		<dnsserver>1.1.1.1</dnsserver>
+	</system>
+	<interfaces>
+		<wan><enable></enable><if>igb1</if><descr>WAN</descr><ipaddr>dhcp</ipaddr></wan>
+		<lan><enable></enable><if>igb0</if><descr>LAN</descr><ipaddr>192.168.1.1</ipaddr><subnet>24</subnet></lan>
+		<opt1><enable></enable><if>igb0.20</if><descr>VISITANTES</descr><ipaddr>10.10.30.254</ipaddr><subnet>24</subnet></opt1>
+	</interfaces>
+	<vlans><vlan><if>igb0</if><tag>20</tag><descr>visitantes</descr><vlanif>igb0.20</vlanif></vlan></vlans>
+	<gateways><gateway_item><name>WANGW</name><interface>wan</interface><gateway>dynamic</gateway><monitor>8.8.8.8</monitor></gateway_item><defaultgw4>WANGW</defaultgw4></gateways>
+	<filter>
+		<rule><tracker>100</tracker><type>pass</type><interface>lan</interface><ipprotocol>inet</ipprotocol><source><network>lan</network></source><destination><any></any></destination><descr>LAN para internet</descr></rule>
+		<rule><tracker>101</tracker><type>pass</type><interface>lan</interface><protocol>tcp</protocol><source><network>lan</network></source><destination><any></any><port>3389</port></destination><descr>RDP liberado</descr><disabled></disabled></rule>
+		<rule><tracker>102</tracker><type>block</type><interface>opt1</interface><source><network>opt1</network></source><destination><network>lan</network><not></not></destination><log></log><descr>Visitantes nao acessam a LAN</descr></rule>
+		<rule><tracker>103</tracker><type>pass</type><interface>opt1</interface><source><network>opt1</network></source><destination><any></any></destination></rule>
+	</filter>
+	<nat><rule><interface>wan</interface><protocol>tcp</protocol><source><any></any></source><destination><network>wanip</network><port>8080</port></destination><target>192.168.1.10</target><local-port>80</local-port><descr>Web interno</descr></rule><outbound><mode>hybrid</mode></outbound></nat>
+	<aliases><alias><name>Servidores</name><type>host</type><address>192.168.1.10 192.168.1.11</address><descr>servidores</descr></alias></aliases>
+	<ca><refid>ca1</refid><descr>CA-VPN-TESTE</descr><crt>LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURPekNDQWlPZ0F3SUJBZ0lVSkN0QUlhazBlYy9NTlBFSXdhQnBlazRDWFhZd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0xERU9NQXdHQTFVRUNnd0ZWR1Z6ZEdVeEdqQVlCZ05WQkFNTUVYWndiaTEwWlhOMFpTNWxlR1Z0Y0d4dgpNQ0FYRFRJMk1URXlNREV6TlRZd05sb1lEekl4TWpZeE1ESTNNVE0xTmpBMldqQXNNUTR3REFZRFZRUUtEQVZVClpYTjBaVEVhTUJnR0ExVUVBd3dSZG5CdUxYUmxjM1JsTG1WNFpXMXdiRzh3Z2dFaU1BMEdDU3FHU0liM0RRRUIKQVFVQUE0SUJEd0F3Z2dFS0FvSUJBUUNTVkprTFZ3S09TUHI3MDIyc2JOcTVCQTR4aGNzSGs4RnZsQVZ3VXVPMgo3Ylk5VCs2QitkaW82NndkS1VPL3VrbjlBN3Y1dWliT3U2ejJabkZVOWkxOEczNVh5Wlp1NzdCWHVNbW10bklPCldMSUY3NEQ4Wi9wRGc2RWRrZDlxcVg1QmwrQzFEUkIwenBqS1U2RmRHTHF6YkNZTiszanFuRU5aNlR3QU16OEsKUDNvMzc3WmhJdllJRGlVN3JpdC8xMHVuTGNFdkdtS1VqaktQczE2RUJWNGV2WXF3WWJ2OFc1cC84Q0p1RXpZMQpGZmg2OVVWbnRwNE0zQ2FDak93VHVlUW16OUNpVTR5dEhrdzNmZkw0K0F1Ty9VajcvNG15SW5VVEJwN1B2WDA5ClV5UnZPelZGalFZTFBzWVhXQnVxNFg1dHhZcThVM2JGYVpSWkhKUmI3T294QWdNQkFBR2pVekJSTUIwR0ExVWQKRGdRV0JCU2MxNVY3UTVwenZGV2h2Vkppa1ZwMHNLVGhOakFmQmdOVkhTTUVHREFXZ0JTYzE1VjdRNXB6dkZXaAp2Vkppa1ZwMHNLVGhOakFQQmdOVkhSTUJBZjhFQlRBREFRSC9NQTBHQ1NxR1NJYjNEUUVCQ3dVQUE0SUJBUUNECkNDOGJ1YVBKU25kWkw0bVQxSHllRlI4NkdTb3hOblBnZGxuYnYxQXFrWTRSS2htT2xjdU9aTGVTOUZiNy9LZ3YKbTA3M2lKUkRPV2FlMGk1Y0tXTlBHR2FqRTExWDQvWGZKOHVjeFdaV01uMmVCVXZGV25xWW94a1dKS21CUjFLTwpsYkRYSmd4TE5UQnM3cE1BcDhSdVZEZlRSR3M5SlE0d09MdnZBNTIvcUp4enJYK3NsWkk4ZDJpeFROVncyTXo1CkZzTTI4L0dWdnJzU3gvNTdLa3ZvVDZRbzZ0bEtmbEk3K2pCazliOTh1U0haOThWV2JLNk9VbXRxWGFsYzV4ZmUKTmRYemZvL1d4cnE4eWhaeVJPQUs4d1Y4QWgrbXoxcTJsK3VkREpNZWNlbUs4ZEw3NVNsaldXN0lMRU81VkFnVwp2enRvb0dlLzFYUlR5eXRnbnB2cwotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==</crt><prv>U0VHUkVET0NIQVZFUFJJVkFEQQ==</prv></ca>
+	<cert><refid>cert1</refid><descr>maria.vpn</descr><caref>ca1</caref><crt>LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURPekNDQWlPZ0F3SUJBZ0lVSkN0QUlhazBlYy9NTlBFSXdhQnBlazRDWFhZd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0xERU9NQXdHQTFVRUNnd0ZWR1Z6ZEdVeEdqQVlCZ05WQkFNTUVYWndiaTEwWlhOMFpTNWxlR1Z0Y0d4dgpNQ0FYRFRJMk1URXlNREV6TlRZd05sb1lEekl4TWpZeE1ESTNNVE0xTmpBMldqQXNNUTR3REFZRFZRUUtEQVZVClpYTjBaVEVhTUJnR0ExVUVBd3dSZG5CdUxYUmxjM1JsTG1WNFpXMXdiRzh3Z2dFaU1BMEdDU3FHU0liM0RRRUIKQVFVQUE0SUJEd0F3Z2dFS0FvSUJBUUNTVkprTFZ3S09TUHI3MDIyc2JOcTVCQTR4aGNzSGs4RnZsQVZ3VXVPMgo3Ylk5VCs2QitkaW82NndkS1VPL3VrbjlBN3Y1dWliT3U2ejJabkZVOWkxOEczNVh5Wlp1NzdCWHVNbW10bklPCldMSUY3NEQ4Wi9wRGc2RWRrZDlxcVg1QmwrQzFEUkIwenBqS1U2RmRHTHF6YkNZTiszanFuRU5aNlR3QU16OEsKUDNvMzc3WmhJdllJRGlVN3JpdC8xMHVuTGNFdkdtS1VqaktQczE2RUJWNGV2WXF3WWJ2OFc1cC84Q0p1RXpZMQpGZmg2OVVWbnRwNE0zQ2FDak93VHVlUW16OUNpVTR5dEhrdzNmZkw0K0F1Ty9VajcvNG15SW5VVEJwN1B2WDA5ClV5UnZPelZGalFZTFBzWVhXQnVxNFg1dHhZcThVM2JGYVpSWkhKUmI3T294QWdNQkFBR2pVekJSTUIwR0ExVWQKRGdRV0JCU2MxNVY3UTVwenZGV2h2Vkppa1ZwMHNLVGhOakFmQmdOVkhTTUVHREFXZ0JTYzE1VjdRNXB6dkZXaAp2Vkppa1ZwMHNLVGhOakFQQmdOVkhSTUJBZjhFQlRBREFRSC9NQTBHQ1NxR1NJYjNEUUVCQ3dVQUE0SUJBUUNECkNDOGJ1YVBKU25kWkw0bVQxSHllRlI4NkdTb3hOblBnZGxuYnYxQXFrWTRSS2htT2xjdU9aTGVTOUZiNy9LZ3YKbTA3M2lKUkRPV2FlMGk1Y0tXTlBHR2FqRTExWDQvWGZKOHVjeFdaV01uMmVCVXZGV25xWW94a1dKS21CUjFLTwpsYkRYSmd4TE5UQnM3cE1BcDhSdVZEZlRSR3M5SlE0d09MdnZBNTIvcUp4enJYK3NsWkk4ZDJpeFROVncyTXo1CkZzTTI4L0dWdnJzU3gvNTdLa3ZvVDZRbzZ0bEtmbEk3K2pCazliOTh1U0haOThWV2JLNk9VbXRxWGFsYzV4ZmUKTmRYemZvL1d4cnE4eWhaeVJPQUs4d1Y4QWgrbXoxcTJsK3VkREpNZWNlbUs4ZEw3NVNsaldXN0lMRU81VkFnVwp2enRvb0dlLzFYUlR5eXRnbnB2cwotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==</crt><prv>U0VHUkVET0NIQVZFUFJJVkFEQQ==</prv></cert>
+	<crl><refid>crl1</refid><descr>CRL-VPN-TESTE</descr><caref>ca1</caref></crl>
+	<openvpn>
+		<openvpn-server><vpnid>1</vpnid><description>VPN equipe</description><protocol>UDP4</protocol><local_port>1194</local_port><interface>wan</interface><tunnel_network>10.8.0.0/24</tunnel_network><local_network>192.168.1.0/24</local_network><data_ciphers>AES-256-GCM</data_ciphers><digest>SHA256</digest><tls>U0VHUkVET1RMUw==</tls><tls_type>crypt</tls_type><caref>ca1</caref><crlref>crl1</crlref><inactive_seconds>3600</inactive_seconds></openvpn-server>
+		<openvpn-server><vpnid>2</vpnid><description>VPN fornecedor</description><protocol>TCP4</protocol><local_port>1199</local_port><interface>wan</interface><tunnel_network>10.9.0.0/24</tunnel_network><tls>U0VHUkVET1RMUw==</tls><tls_type>auth</tls_type><caref>ca1</caref></openvpn-server>
+	</openvpn>
+	<ipsec><phase1><ikeid>1</ikeid><descr>Filial</descr><remote-gateway>203.0.113.10</remote-gateway><iketype>ikev2</iketype><authentication_method>pre_shared_key</authentication_method><pre-shared-key>SEGREDO-PSK-IPSEC</pre-shared-key></phase1>
+		<phase2><ikeid>1</ikeid><descr>LAN-Filial</descr><localid><type>network</type><address>192.168.1.0</address></localid><remoteid><type>network</type><address>192.168.2.0</address></remoteid></phase2></ipsec>
+	<captiveportal><visitantes><zone>visitantes</zone><descr>Portal</descr><enable></enable><interface>opt1</interface><auth_method>radius</auth_method><timeout>480</timeout><idletimeout>60</idletimeout><radiuskey>SEGREDO-RADIUS</radiuskey></visitantes></captiveportal>
+	<dhcpd><lan><enable></enable><range><from>192.168.1.100</from><to>192.168.1.199</to></range><staticmap><mac>aa:bb:cc:dd:ee:ff</mac><ipaddr>192.168.1.50</ipaddr><hostname>impressora</hostname><descr>Impressora RH</descr></staticmap></lan></dhcpd>
+	<snmpd><rocommunity>SEGREDO-SNMP</rocommunity></snmpd>
+	<installedpackages><package><name>suricata</name><version>7.0.8</version></package></installedpackages>
+	<revision><time>1795190000</time><description>admin@192.168.1.5: regra de visitantes</description><username>admin@192.168.1.5</username></revision>
+</pfsense>
