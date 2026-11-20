@@ -55,7 +55,8 @@ if ([string]::IsNullOrWhiteSpace($BaseDir)) { $BaseDir = Split-Path -Parent $MyI
 
 # ------------------------------ funcoes -------------------------------
 function Get-List($Value) {
-    # No [xml] do PowerShell, um item vira objeto e varios viram lista: sempre lista.
+    # No [xml] do PowerShell, um item vira objeto e varios viram lista. ATENCAO: a
+    # saida de funcao e "desembrulhada" - quem precisa de lista (Count, +) usa @(Get-List ...).
     if ($null -eq $Value) { return @() }
     if ($Value -is [string]) { if ($Value -eq '') { return @() } }
     return @($Value)
@@ -217,18 +218,18 @@ function New-Report($Cfg, $Prev, [string]$SourceFile, [string]$PrevFile) {
     $limiteCert = $agora.AddDays(60)
 
     # --- coleta dos dados -------------------------------------------------
-    $users  = Get-List $sys.user
-    $groups = Get-List $sys.group
+    $users  = @(Get-List $sys.user)
+    $groups = @(Get-List $sys.group)
     $uidName = @{}; foreach ($u in $users) { $uidName[(Get-Text $u 'uid')] = Get-Text $u 'name' }
     $userGroups = @{}
     foreach ($g in $groups) { foreach ($m in (Get-List $g.member)) { $n = $uidName[[string]$m]; if ($n) { if (-not $userGroups.ContainsKey($n)) { $userGroups[$n] = @() }; $userGroups[$n] += (Get-Text $g 'name') } } }
     $adminGroup = @($groups | Where-Object { (Get-Text $_ 'name') -eq 'admins' -or @(Get-List $_.priv) -contains 'page-all' } | ForEach-Object { Get-Text $_ 'name' })
-    $rules = Get-List $p.filter.rule
-    $certs = Get-List $p.cert
-    $cas   = Get-List $p.ca
-    $crls  = Get-List $p.crl
+    $rules = @(Get-List $p.filter.rule)
+    $certs = @(Get-List $p.cert)
+    $cas   = @(Get-List $p.ca)
+    $crls  = @(Get-List $p.crl)
     $revoked = @{}; foreach ($c in $crls) { foreach ($rc in (Get-List $c.cert)) { $revoked[(Get-Text $rc 'refid')] = (Get-Text $c 'descr') } }
-    $ovpn  = Get-List $p.openvpn.'openvpn-server'
+    $ovpn  = @(Get-List $p.openvpn.'openvpn-server')
 
     # --- pontos de atencao -----------------------------------------------
     $att = New-Object System.Collections.ArrayList
