@@ -4,9 +4,71 @@
 
 A partir da versão 2, o pfSense-Backup também **guarda os logs do pfSense** no servidor Windows, organizados por categoria e por dia, e monta a **planilha de acessos dos visitantes** do portal cativo.
 
-Tudo passa pelo **mesmo caminho do backup**: a WebGUI, por HTTPS, com o **mesmo usuário**, a **mesma senha cifrada** e o **mesmo certificado fixado**. Nada é instalado no pfSense, e o servidor não abre nenhuma porta.
+Há **dois modos** de buscar os logs. O instalador pergunta qual usar:
 
-## O que é coletado
+| | **SSH com chave travada** (recomendado, v2.1) | **WebGUI** |
+|---|---|---|
+| Como | Lê os **arquivos** de log do pfSense, por SSH (criptografado) | Lê as telas de log, por HTTPS |
+| Firewall | ✅ **completo**, mesmo com dezenas de milhares de linhas por hora | ⚠️ limitado a N linhas por coleta (a página do pfSense tem limite de memória) |
+| Autenticação (logins na WebGUI e no SSH) | ✅ | ❌ (só admin vê) |
+| Lacuna entre coletas | **nenhuma**: retoma do byte exato, inclusive quando o log gira | possível, com `AVISO` |
+| Peso no pfSense | quase zero: só lê arquivos | monta páginas HTML |
+| Privilégios no pfSense | shell (`User - System: Shell account access`) com a chave **travada** | um por log, e os de **pacote**, que também permitem **alterar** os pacotes |
+| No servidor | OpenSSH (o instalador oferece baixar no Server 2016) | nada |
+
+Nos dois modos: o **mesmo usuário** do backup, nada é instalado no pfSense como pacote, e o servidor não abre nenhuma porta.
+
+## Modo SSH (recomendado)
+
+### A chave travada
+
+O instalador gera uma chave SSH **só deste servidor** e a linha pronta para colar no pfSense:
+
+```
+restrict,from="172.16.10.7",command="/bin/sh -c '...'" ssh-ed25519 AAAA... pfSense-Backup-FWCLIENTE@SERVIDOR
+```
+
+- `from=`: a chave **só funciona a partir do IP deste servidor**.
+- `restrict`: **sem terminal**, sem túnel e sem redirecionamento.
+- `command=`: o pfSense **ignora** qualquer comando enviado e roda só este, que aceita 3 pedidos sobre uma **lista fixa** de arquivos de log:
+  - `list`: lista os arquivos;
+  - `get <arquivo> <posição>`: lê a partir da posição;
+  - `sig <arquivo>`: lê a 1ª linha, usada para reconhecer o log que girou.
+
+  Qualquer outra coisa, caminho fora da lista ou `..`, é **recusada**. Mesmo roubada, a chave **não altera nada** e não lê senhas nem a configuração.
+- A **chave SSH do pfSense** fica **fixada**, como o certificado da WebGUI. Se outro equipamento responder no lugar dele, a coleta para.
+
+A verificação do instalador (`-CheckOnly`) **reprova** a chave se o pfSense executar um comando fora da lista.
+
+### Preparar o pfSense
+
+1. **System › User Manager › Users** › edite o `srvbackup-pfsense`:
+   - **Authorized SSH Keys**: cole a linha **inteira** do arquivo `C:\pfSense-Backup\config\<Nome>-chave-ssh-pfsense.txt`, gerado pelo instalador. É uma linha só, começando com `restrict,from=`.
+   - **Effective Privileges › Add**: `User - System: Shell account access`. É necessário para o comando travado rodar.
+2. **Deixe os logs legíveis pelo grupo do usuário.** No pfSense, os logs são só do root. O script [`pfsense/pfsense-backup-permissoes.sh`](../pfsense/pfsense-backup-permissoes.sh) dá leitura **só ao grupo** `LOGS-PFSENSE` e só aos arquivos da lista. Rode uma vez e agende a cada 10 minutos (System › Cron), porque, quando um log gira, o pfSense recria o arquivo só para o root:
+   ```sh
+   mkdir -p /root/bin && fetch -o /root/bin/pfsense-backup-permissoes.sh https://raw.githubusercontent.com/AlexandreAlan/pfSense-Backup/main/pfsense/pfsense-backup-permissoes.sh
+   sh /root/bin/pfsense-backup-permissoes.sh
+   ```
+   Cron: `*/10 * * * * root /bin/sh /root/bin/pfsense-backup-permissoes.sh`
+3. **Recomendado:** SSH **só com chave** (System › Advanced › Admin Access › *SSHd Key Only*). Sem isso, a **senha** do usuário de backup também abre um terminal no pfSense.
+4. Libere a porta SSH do pfSense para o IP do servidor, se ainda não estiver liberada.
+
+No modo SSH, o grupo `LOGS-PFSENSE` **não precisa de privilégio nenhum na WebGUI**: ele só serve para dar a leitura dos arquivos. Os privilégios de pacote (pfBlockerNG, Suricata, Squid) podem ser **retirados**.
+
+### Como a coleta funciona
+
+- Cada log é lido **do byte exato onde a coleta anterior parou**. A última linha, se ainda estiver pela metade, fica para a próxima.
+- Quando o log **gira** (vira `.0.bz2`, ou é arquivado em `/var/log/arquivo`), o arquivo antigo é reconhecido pela 1ª linha: a coleta **termina de ler o antigo** e depois lê o novo do começo. Nada se perde e nada duplica.
+- Arquivos que o pacote **reescreve** (o pfBlockerNG apara os seus) são conferidos pelas últimas linhas, para não duplicar.
+- Suricata **por interface**, com o nome da interface tirado do `config.xml` do último backup: `suricata\LAN\alertas`, `suricata\VISITANTES\bloqueios`.
+- As concessões de DHCP vêm do próprio `dhcpd.leases`.
+
+## Modo WebGUI
+
+Tudo passa pelo **mesmo caminho do backup**: a WebGUI, por HTTPS, com o mesmo usuário, a mesma senha cifrada e o mesmo certificado fixado.
+
+### O que é coletado (modo WebGUI)
 
 | Fonte (`LogSources`) | De onde vem | Privilégio no pfSense |
 |---|---|---|
@@ -33,7 +95,7 @@ Tudo passa pelo **mesmo caminho do backup**: a WebGUI, por HTTPS, com o **mesmo 
 
 **Fora da coleta:** o log *Authentication › General* (logins na WebGUI e no SSH) **não tem privilégio próprio** no pfSense, só administrador vê. Dar administrador ao usuário iria contra a verificação do instalador, que **reprova** um usuário capaz de abrir o gerenciador de usuários, as regras ou o prompt de comandos.
 
-## Preparar o pfSense
+### Preparar o pfSense (modo WebGUI)
 
 Use o **mesmo usuário do backup** (`srvbackup-pfsense`):
 
@@ -76,7 +138,8 @@ C:\pfSense-Backup\
       vpn-openvpn\...            vpn-ipsec\...         dhcp\...        dns\...
       gateways\...               firewall\...
       pfblockerng\ip_block\...   pfblockerng\dnsbl\...
-      suricata\LAN_igb0-alerts\...   suricata\LAN_igb0-block\...
+      autenticacao\...          (so no modo SSH)
+      suricata\LAN\alertas\...      suricata\LAN\bloqueios\...   suricata\VISITANTES\alertas\...
       squid-acessos\...          squidguard-bloqueios\...
       dhcp-concessoes\2026\11\2026-11-20.csv
   visitantes\FWCLIENTE\2026\acessos-2026-11.csv
@@ -102,7 +165,7 @@ C:\pfSense-Backup\
 > [!CAUTION]
 > **LGPD:** a planilha tem nome e CPF. A pasta já é restrita a SYSTEM e Administradores pelo instalador. Combine com o cliente quem pode consultá-la.
 
-## Como a coleta funciona (incremental)
+## Como a coleta funciona no modo WebGUI (incremental)
 
 A cada execução, o script pede as **últimas N linhas** de cada log (`LogLines`, padrão 5000), acha **onde a coleta anterior parou** e grava **só o que é novo**. O controle fica em `state\<Nome>\`.
 
@@ -126,9 +189,11 @@ Se o pfSense tiver o pacote **LightSquid**, o instalador pergunta o endereço (p
 | Campo | Padrão | Para que serve |
 |---|---|---|
 | `Logs` | `false` | Liga a coleta |
+| `LogTransport` | `ssh` ou `web` | Modo da coleta |
+| `SshPort`, `SshUser`, `SshFrom`, `SshPath` | 22, usuário do backup, IP do servidor, OpenSSH | Modo SSH: porta do pfSense, usuário, IP travado na chave, caminho do `ssh.exe` |
 | `LogSources` | todas as da tabela, menos `ppp` | Fontes, separadas por vírgula |
 | `LogEvery` | `60` | Minutos entre coletas (tarefa agendada) |
-| `LogLines` | `5000` | Linhas pedidas por log a cada coleta |
+| `LogLines` | `10000` | (WebGUI) linhas pedidas por log a cada coleta |
 | `LogKeepDays` | `400` | Dias guardados |
 | `LogMaxTime` | `600` | Tempo máximo de cada download, em segundos |
 | `LightSquidUrl`, `LightSquidUser` | vazio | LightSquid (opcional) |

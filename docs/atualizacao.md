@@ -49,3 +49,4 @@ Rodar de novo um perfil **já atualizado** funciona como antes: o instalador mos
 |---|---|---|
 | 1 | (sem o campo) | Backup diário do `config.xml`, pinning, status para o Zabbix, cópia externa, criptografia |
 | 2.0.0 | `2` | [Relatório de auditoria](auditoria.md), [coleta de logs](logs.md) (com a planilha de visitantes e o LightSquid) e atualização sem refazer o processo |
+| 2.1.0 | `3` | Logs **pelo SSH com chave travada**: completos (inclusive firewall e autenticação), sem lacuna e quase sem peso no pfSense. Suricata por interface. Na atualização da 2.0, o instalador pergunta só o modo (SSH ou WebGUI) |
