@@ -31,6 +31,16 @@ Ele identifica a versão do perfil pelo campo `SchemaVersion` do `config\<Nome>.
 | Tarefa do backup | recriada com os mesmos valores |
 | Verificação do usuário e backup de teste | feitos, como numa instalação |
 
+### Versão de correção (mesmo formato de perfil)
+
+Quando muda só o programa e não o formato do perfil (por exemplo, da 2.1.2 para a 2.1.3), o instalador **não pergunta nada**: mantém todos os valores, copia os scripts, recria as tarefas e testa.
+
+```
+==> Atualizacao: pfSense-Backup 2.1.2 -> 2.1.3 (perfil 'FWCLIENTE', mesmo formato: versao 3)
+```
+
+No modo SSH ele compara a linha da chave com a da versão anterior. Se for igual, avisa que **não há nada a fazer no pfSense**. Se mudou, mostra em vermelho que a linha precisa ser trocada no User Manager.
+
 Rodar de novo um perfil **já atualizado** funciona como antes: o instalador mostra cada valor atual entre colchetes, e ENTER mantém.
 
 ## Sem perguntas (vários servidores)
@@ -51,3 +61,4 @@ Rodar de novo um perfil **já atualizado** funciona como antes: o instalador mos
 | 2.0.0 | `2` | [Relatório de auditoria](auditoria.md), [coleta de logs](logs.md) (com a planilha de visitantes e o LightSquid) e atualização sem refazer o processo |
 | 2.1.0 | `3` | Logs **pelo SSH com chave travada**: completos (inclusive firewall e autenticação), sem lacuna e quase sem peso no pfSense. Suricata por interface. Na atualização da 2.0, o instalador pergunta só o modo (SSH ou WebGUI) |
 | 2.1.2 | `3` | Correções no Windows Server 2016 (PowerShell 5.1) e no pfSense (shell `tcsh`). Quem já instalou a 2.1.x: rodar o instalador de novo e **trocar a chave** no User Manager pela linha nova de `config\<Nome>-chave-ssh-pfsense.txt` |
+| 2.1.3 | `3` | Suricata: cada interface na sua pasta (`descr` em CDATA no `config.xml` virava `System.Xml.XmlElement`). Atualização de correção sem perguntas, e aviso se a linha da chave mudou |

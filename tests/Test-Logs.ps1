@@ -147,7 +147,7 @@ Cenario 'mais linhas que o pedido vira AVISO de lacuna' {
 # ------------------------------------------------------------ modo SSH
 Write-Host '13) Modo SSH (chave travada, comando forcado de verdade)'
 $sw = Join-Path $WorkDir 'ssh'; $root = Join-Path $sw 'pfsense'
-foreach ($d in @('var/log/arquivo', 'var/log/pfblockerng', 'var/log/suricata/suricata_igb033667', 'var/squidGuard/log', 'var/dhcpd/var/db', 'secrets', 'backups/SSHT')) {
+foreach ($d in @('var/log/arquivo', 'var/log/pfblockerng', 'var/log/suricata/suricata_igb033667', 'var/log/suricata/suricata_igb0.2052418', 'var/squidGuard/log', 'var/dhcpd/var/db', 'secrets', 'backups/SSHT')) {
     New-Item -ItemType Directory -Force (Join-Path $root $d), (Join-Path $sw $d) | Out-Null
 }
 function Hoje([int]$seg) { $d = (Get-Date).AddSeconds(-$seg); return ($d.ToString('MMM ', [Globalization.CultureInfo]::InvariantCulture) + $d.Day.ToString().PadLeft(2) + $d.ToString(' HH:mm:ss')) }
@@ -161,9 +161,10 @@ Escreve 'var/log/portalauth.log' @("$(Hoje 200) fw logportalauth[9]: Zone: visit
 Escreve 'var/log/filter.log' @(1..6 | ForEach-Object { "$(Hoje (100 - $_)) fw filterlog[5]: 5,,,1000000103,igb0,match,block,in,4,0x0,,64,1,0,none,6,tcp,60,10.0.0.$_,8.8.8.8,5000,443,0,S,1,,64240,,mss" })
 Escreve 'var/log/pfblockerng/ip_block.log' @('Nov 20 10:00:01,a', 'Nov 20 10:00:02,b', 'Nov 20 10:00:03,c')
 Escreve 'var/log/suricata/suricata_igb033667/alerts.log' @("$((Get-Date).ToString('MM/dd/yyyy-HH:mm:ss')).1  [**] [1:1:1] ET teste [**] {TCP} 1.2.3.4:1 -> 172.16.10.5:80")
+Escreve 'var/log/suricata/suricata_igb0.2052418/alerts.log' @("$((Get-Date).ToString('MM/dd/yyyy-HH:mm:ss')).2  [**] [1:2:1] ET visitante [**] {TCP} 10.10.30.9:1 -> 5.6.7.8:80", "$((Get-Date).ToString('MM/dd/yyyy-HH:mm:ss')).3  [**] [1:3:1] ET visitante 2 [**] {TCP} 10.10.30.9:2 -> 5.6.7.8:80")
 Escreve 'var/squidGuard/log/block.log' @("$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) [1] Request(default/adult/-) http://x.com/ 172.16.10.9/- - GET REDIRECT")
 Escreve 'var/dhcpd/var/db/dhcpd.leases' @('lease 172.16.10.50 {', '  starts 4 2026/11/20 13:00:01;', '  ends 4 2026/11/20 15:00:01;', '  binding state active;', '  hardware ethernet aa:bb:cc:dd:ee:50;', '  client-hostname "PC-RH";', '}')
-Escreve 'backups/SSHT/config-SSHT-2026-11-20_0300.xml' @('<?xml version="1.0"?><pfsense><interfaces><lan><if>igb0</if><descr>LAN</descr></lan></interfaces><installedpackages><suricata><rule><interface>lan</interface><uuid>33667</uuid></rule></suricata></installedpackages></pfsense>')
+Escreve 'backups/SSHT/config-SSHT-2026-11-20_0300.xml' @('<?xml version="1.0"?><pfsense><interfaces><lan><if>igb0</if><descr><![CDATA[LAN]]></descr></lan><opt3><if>igb0.20</if><descr><![CDATA[VISITANTES]]></descr></opt3></interfaces><installedpackages><suricata><rule><interface>lan</interface><uuid>33667</uuid><descr><![CDATA[LAN]]></descr></rule><rule><interface>opt3</interface><uuid>52418</uuid><descr><![CDATA[VISITANTES - scan e ataques]]></descr></rule></suricata></installedpackages></pfsense>')
 Copy-Item (Join-Path $root 'backups/SSHT/config-SSHT-2026-11-20_0300.xml') (Join-Path $sw 'backups/SSHT/')
 
 . (Join-Path $repo 'Logs-pfSense.ps1') -Name 'SSHT' -BaseDir $sw
@@ -208,7 +209,7 @@ $CheckOnly = $false
 Cenario 'primeira coleta: tudo, inclusive firewall e autenticacao' {
     $script:Warnings.Clear(); $script:Counts.Clear()
     Invoke-LogCollection | Out-Null
-    $esp = @{ 'sistema' = 4; 'autenticacao' = 1; 'portal-visitantes' = 1; 'firewall' = 6; 'pfblockerng/ip_block' = 3; 'suricata/LAN/alertas' = 1; 'squidguard-bloqueios' = 1 }
+    $esp = @{ 'sistema' = 4; 'autenticacao' = 1; 'portal-visitantes' = 1; 'firewall' = 6; 'pfblockerng/ip_block' = 3; 'suricata/LAN/alertas' = 1; 'suricata/VISITANTES/alertas' = 2; 'squidguard-bloqueios' = 1 }
     foreach ($k in $esp.Keys) {
         $n = Linhas (ArqSsh $k)
         if ($n -ne $esp[$k]) {
