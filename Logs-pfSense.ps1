@@ -255,7 +255,7 @@ function Send-Form([string]$Path, [string[]]$Fields) {
 }
 
 function Connect-PfSense {
-    $code = Invoke-Web @('-c', $CookieJar, "$base/index.php")
+    Invoke-Web @('-c', $CookieJar, "$base/index.php") | Out-Null
     $tok = Get-Csrf (Read-Text $TmpFile)
     if (-not $tok) { throw "nao achei o token CSRF na tela de login (e mesmo um pfSense em $base?)." }
     Invoke-Web @('-b', $CookieJar, '-c', $CookieJar,
@@ -264,7 +264,7 @@ function Connect-PfSense {
         '--data-urlencode', 'login=Sign In',
         "$base/index.php") @(ConvertTo-CurlConfig 'data-urlencode' "passwordfld=$pass") | Out-Null
     # Confirma o login numa pagina qualquer (index.php redireciona para a primeira permitida).
-    $code = Invoke-Web @('-b', $CookieJar, '-c', $CookieJar, '-L', "$base/index.php")
+    Invoke-Web @('-b', $CookieJar, '-c', $CookieJar, '-L', "$base/index.php") | Out-Null
     $html = Read-Text $TmpFile
     if (Test-LoginPage $html) {
         Stop-Permanent "login recusado: usuario/senha errados ou usuario desativado. Confira o usuario '$($cfg.User)' no pfSense e rode o instalador com -UpdatePassword."
