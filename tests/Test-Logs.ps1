@@ -182,8 +182,8 @@ Cenario 'a trava recusa tudo que nao for list/get/sig dos logs' {
     $tentativas = @('id', 'list x', 'get /etc/passwd 0', 'get /var/log/../../../etc/passwd 0', 'get /var/log/system.log 0;id',
                     'get /var/log/system.log abc', 'sig /etc/passwd', 'get', 'get /var/log/nginx.log 0')
     foreach ($t in $tentativas) {
-        $r = Invoke-Ssh ($t -split ' ') $TmpFile
-        $out = Read-Text $TmpFile
+        $r = Invoke-Ssh ($t -split ' ')
+        $out = Read-Text $r.Out
         if ($r.Code -ne 2 -or $out -match 'root:|uid=|sistema') { throw "'$t' deveria ser recusado (exit $($r.Code), saida: $out)" }
     }
     "($($tentativas.Count) tentativas recusadas)"

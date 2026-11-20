@@ -197,6 +197,7 @@ $script:SshRoot  = ''   # so nos testes: pasta que faz o papel da raiz do pfSens
 $script:Csrf     = ''
 $script:Warnings = New-Object System.Collections.ArrayList
 $script:Counts   = [ordered]@{}
+$script:TmpFiles = New-Object System.Collections.ArrayList
 
 # ------------------------------ funcoes -------------------------------
 function Write-Log([string]$Message) {
@@ -257,8 +258,11 @@ function ConvertTo-CurlConfig([string]$Option, [string]$Value) {
 }
 
 function Read-Text([string]$File) {
+    # Leitura compartilhada: o arquivo pode ainda estar aberto por quem o gerou.
     if (-not (Test-Path $File)) { return '' }
-    return [IO.File]::ReadAllText($File, (New-Object Text.UTF8Encoding($false)))
+    $fs = New-Object IO.FileStream($File, 'Open', 'Read', 'ReadWrite')
+    try { $sr = New-Object IO.StreamReader($fs, (New-Object Text.UTF8Encoding($false))); return $sr.ReadToEnd() }
+    finally { $fs.Dispose() }
 }
 
 function Invoke-Web([string[]]$CurlArgs, [string[]]$Secrets = @(), [string[]]$Tls = $script:Tls) {
@@ -697,12 +701,20 @@ function Get-SuricataIfName([string]$Text) {
     return $Text
 }
 
-function Invoke-Ssh([string[]]$Remote, [string]$OutFile) {
+function New-TmpName([string]$Ext = '.tmp') {
+    $f = Join-Path $SecDir ("logs_" + [guid]::NewGuid().ToString('N') + $Ext)
+    [void]$script:TmpFiles.Add($f)
+    return $f
+}
+
+function Invoke-Ssh([string[]]$Remote) {
     # ssh com a chave do perfil e o host fixado (known_hosts proprio, StrictHostKeyChecking).
-    # A saida vai byte a byte para $OutFile (Start-Process redireciona pelo handle do
-    # arquivo, sem passar pela pagina de codigo do console). Devolve @{ Code; Err }.
-    $err = "$OutFile.err"
-    if (Test-Path $OutFile) { Remove-Item $OutFile -Force }
+    # A saida vai byte a byte para um arquivo novo a cada chamada (o Start-Process
+    # redireciona pelo handle do arquivo, sem passar pela pagina de codigo do console,
+    # e pode segurar esse arquivo por um instante depois que o ssh termina - por isso
+    # nunca se reaproveita nem se altera esse arquivo). Devolve @{ Code; Err; Out }.
+    $OutFile = New-TmpName
+    $err = New-TmpName '.err'
     $a = @('-i', $SshKeyFile, '-p', "$sshPort", '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
            '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$KnownHosts", '-o', 'GlobalKnownHostsFile=none',
            '-o', "ConnectTimeout=$timeout", '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
@@ -710,7 +722,6 @@ function Invoke-Ssh([string[]]$Remote, [string]$OutFile) {
     $p = Start-Process -FilePath $script:Ssh -ArgumentList $a -NoNewWindow -Wait -PassThru `
         -RedirectStandardOutput $OutFile -RedirectStandardError $err
     $e = (Read-Text $err).Trim()
-    Remove-Item $err -Force -ErrorAction SilentlyContinue
     if ($p.ExitCode -eq 255) {
         if ($e -match 'Host key verification failed|IDENTIFICATION HAS CHANGED|No .* host key is known') {
             Stop-Permanent "a chave SSH do pfSense NAO confere com a fixada no cadastro ($KnownHosts). Se o pfSense foi reinstalado, confira e rode o instalador com -TrustNewSshKey. Se nao foi, alguem pode estar se passando pelo firewall."
@@ -720,14 +731,14 @@ function Invoke-Ssh([string[]]$Remote, [string]$OutFile) {
         }
         throw "ssh falhou: $e"
     }
-    return [pscustomobject]@{ Code = $p.ExitCode; Err = $e }
+    return [pscustomobject]@{ Code = $p.ExitCode; Err = $e; Out = $OutFile }
 }
 
 function Get-SshList {
-    $r = Invoke-Ssh @('list') $TmpFile
+    $r = Invoke-Ssh @('list')
     if ($r.Code -ne 0) { Stop-Permanent "o comando 'list' foi recusado pelo pfSense ($($r.Err)). A linha da chave no pfSense esta completa (com o command=...)?" }
     $out = @()
-    foreach ($l in ((Read-Text $TmpFile) -split "`r?`n")) {
+    foreach ($l in ((Read-Text $r.Out) -split "`r?`n")) {
         $m = [regex]::Match($l, '^(\d+) (\S+) (/\S+)$')
         if ($m.Success) {
             $pth = $m.Groups[3].Value
@@ -739,9 +750,9 @@ function Get-SshList {
 }
 
 function Get-SshSig([string]$Path) {
-    $r = Invoke-Ssh @('sig', $Path) $TmpFile
+    $r = Invoke-Ssh @('sig', $Path)
     if ($r.Code -ne 0) { return '' }
-    return (Read-Text $TmpFile).Trim()
+    return (Read-Text $r.Out).Trim()
 }
 
 function Get-StateKey([string]$Path) { return ('ssh' + ($Path -replace '[^A-Za-z0-9]+', '_')) }
@@ -760,23 +771,33 @@ function Set-PosState([string]$Path, [string]$Sig, [int64]$Off) {
     [IO.File]::WriteAllText((Join-Path $StateDir ((Get-StateKey $Path) + '.pos')), "$Sig $Off", (New-Object Text.ASCIIEncoding))
 }
 
-function Complete-Lines([string]$File) {
-    # Corta a ultima linha incompleta (o pfSense pode estar no meio dela). Devolve
-    # quantos bytes foram aproveitados: a proxima coleta continua dali.
-    if (-not (Test-Path $File)) { return [int64]0 }
-    $fs = [IO.File]::Open($File, 'Open', 'ReadWrite')
+function Complete-Lines([string]$File, [string]$Dest) {
+    # Copia para $Dest so ate a ultima quebra de linha (o pfSense pode estar no meio
+    # da ultima). Devolve quantos bytes foram aproveitados: a proxima coleta continua dali.
+    $in = New-Object IO.FileStream($File, 'Open', 'Read', 'ReadWrite')
     try {
-        $pos = $fs.Length - 1
-        $buf = New-Object byte[] 1
+        $pos = $in.Length - 1
+        $one = New-Object byte[] 1
         while ($pos -ge 0) {
-            $fs.Position = $pos
-            [void]$fs.Read($buf, 0, 1)
-            if ($buf[0] -eq 10) { break }
+            $in.Position = $pos
+            [void]$in.Read($one, 0, 1)
+            if ($one[0] -eq 10) { break }
             $pos--
         }
-        $fs.SetLength($pos + 1)
-        return [int64]($pos + 1)
-    } finally { $fs.Dispose() }
+        $keep = [int64]($pos + 1)
+        $out = New-Object IO.FileStream($Dest, 'Create', 'Write', 'None')
+        try {
+            $in.Position = 0
+            $buf = New-Object byte[] 1048576
+            $left = $keep
+            while ($left -gt 0) {
+                $n = $in.Read($buf, 0, [int][Math]::Min([int64]$buf.Length, $left))
+                if ($n -le 0) { break }
+                $out.Write($buf, 0, $n); $left -= $n
+            }
+        } finally { $out.Dispose() }
+        return $keep
+    } finally { $in.Dispose() }
 }
 
 function Save-LinesFromFile([string]$Category, [string]$File, [string]$Source, [string]$TailState, [bool]$KeepLines) {
@@ -874,16 +895,17 @@ function Sync-SshLog([string]$Source, [string]$Category, [string]$Path, $ByPath,
     $newOff = [int64]0
     $kept = New-Object System.Collections.ArrayList
     foreach ($c in $chunks) {
-        $r = Invoke-Ssh @('get', $c.Path, "$($c.From)") $TmpFile
+        $r = Invoke-Ssh @('get', $c.Path, "$($c.From)")
         if ($r.Code -ne 0) { Add-Warning "$Source`: o pfSense recusou ler $($c.Path) ($($r.Err)) - rode o script de permissoes no pfSense."; return }
-        $used = Complete-Lines $TmpFile
+        $linhas = New-TmpName
+        $used = Complete-Lines $r.Out $linhas
         if ($c.Dedupe) {
-            $all = @([IO.File]::ReadAllLines($TmpFile, (New-Object Text.UTF8Encoding($false))) | Where-Object { $_ })
+            $all = @([IO.File]::ReadAllLines($linhas, (New-Object Text.UTF8Encoding($false))) | Where-Object { $_ })
             $sel = Select-NewLines $all $key 0 $false
             Save-Lines $Category $sel.New $Source
             if ($KeepLines) { foreach ($x in $sel.New) { [void]$kept.Add($x) } }
         } else {
-            $k = Save-LinesFromFile $Category $TmpFile $Source $key $KeepLines
+            $k = Save-LinesFromFile $Category $linhas $Source $key $KeepLines
             foreach ($x in $k) { [void]$kept.Add($x) }
         }
         if ($c.Path -eq $Path) { $newOff = $c.From + $used }
@@ -972,16 +994,16 @@ function Collect-Ssh {
         catch { if ($script:NoRetry) { throw }; Add-Warning "$($par[0]): $($_.Exception.Message)" }
     }
     if ($sources -contains 'dhcp-concessoes' -and $byPath.ContainsKey('/var/dhcpd/var/db/dhcpd.leases')) {
-        $r = Invoke-Ssh @('get', '/var/dhcpd/var/db/dhcpd.leases', '0') $TmpFile
-        if ($r.Code -eq 0) { Save-DhcpLeases (Read-Text $TmpFile) }
+        $r = Invoke-Ssh @('get', '/var/dhcpd/var/db/dhcpd.leases', '0')
+        if ($r.Code -eq 0) { Save-DhcpLeases (Read-Text $r.Out) }
     }
 }
 
 function Test-SshAccess {
     # Modo -CheckOnly com SSH: primeiro confere que a chave NAO executa outro comando,
     # depois que ela lista os logs de cada fonte.
-    $r = Invoke-Ssh @('id') $TmpFile
-    if ((Read-Text $TmpFile) -match 'uid=' -or $r.Code -eq 0) {
+    $r = Invoke-Ssh @('id')
+    if ((Read-Text $r.Out) -match 'uid=' -or $r.Code -eq 0) {
         Stop-Permanent "a chave SSH NAO esta travada: o pfSense executou um comando qualquer ('id'). Cole no pfSense exatamente a linha gerada pelo instalador (comeca com restrict,from=...,command=...)."
     }
     Write-Log '  OK      chave travada: comando fora da lista foi recusado'
@@ -1086,6 +1108,9 @@ $pass = $null
 $mutex = $null
 try {
     foreach ($d in @($LogDir, $StateDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force $d | Out-Null } }
+    # sobras de coletas anteriores (arquivo ainda preso quando a coleta terminou)
+    Get-ChildItem $SecDir -Filter 'logs_*' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddHours(-2) } |
+        ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
     if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt 5MB) { Move-Item $LogFile "$LogFile.old" -Force }
 
     # Uma coleta por vez para o mesmo firewall (a tarefa roda de hora em hora).
@@ -1169,6 +1194,7 @@ catch {
 finally {
     $pass = $null
     Remove-Item $CookieJar, $TmpFile -Force -ErrorAction SilentlyContinue
+    foreach ($t in $script:TmpFiles) { Remove-Item $t -Force -ErrorAction SilentlyContinue }
     if ($mutex) { try { $mutex.ReleaseMutex() } catch {}; $mutex.Dispose() }
 }
 exit $exitCode
