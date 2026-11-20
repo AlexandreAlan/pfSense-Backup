@@ -154,6 +154,8 @@ function New-ForcedCommand([string]$Root = '') {
     # Script que o pfSense roda no lugar de QUALQUER comando enviado com a chave do
     # servidor (command="..." no authorized_keys). Uma linha, sem aspas simples (vai
     # dentro de sh -c '...' e o shell do usuario e o tcsh). $Root so existe para os testes.
+    # NUNCA usar o caractere de exclamacao: o sshd roda isto via "tcsh -c", e o tcsh faz
+    # expansao de historico com ele MESMO dentro de aspas simples ("0: Event not found.").
     $files = @("$Root/var/log/system.log*", "$Root/var/log/auth.log*", "$Root/var/log/portalauth.log*",
         "$Root/var/log/openvpn.log*", "$Root/var/log/ipsec.log*", "$Root/var/log/dhcpd.log*",
         "$Root/var/log/resolver.log*", "$Root/var/log/gateways.log*", "$Root/var/log/filter.log*",
@@ -168,7 +170,7 @@ function New-ForcedCommand([string]$Root = '') {
           'case "$1" in ' +
           'list) [ $# -eq 1 ] || exit 2; for f in ' + $glob + '; do [ -f "$f" ] && [ -r "$f" ] && ok "$f" || continue; ' +
               's=$(wc -c < "$f" | tr -d " "); case "$f" in *.bz2) h=-;; *) h=$(head -n 1 "$f" | cksum | cut -d " " -f 1);; esac; echo "$s $h $f"; done; exit 0;; ' +
-          'get) [ $# -eq 3 ] || exit 2; ok "$2" || exit 2; case "$3" in *[!0-9]*|"") exit 2;; esac; n=$(($3+1)); ' +
+          'get) [ $# -eq 3 ] || exit 2; ok "$2" || exit 2; [ -n "$3" ] && [ -z "$(printf %s "$3" | tr -d 0-9)" ] || exit 2; n=$(($3+1)); ' +
               'case "$2" in *.bz2) bzcat -- "$2" | tail -c +$n;; *) tail -c +$n -- "$2";; esac; exit 0;; ' +
           'sig) [ $# -eq 2 ] || exit 2; ok "$2" || exit 2; ' +
               'case "$2" in *.bz2) bzcat -- "$2" | head -n 1;; *) head -n 1 -- "$2";; esac | cksum | cut -d " " -f 1; exit 0;; ' +
