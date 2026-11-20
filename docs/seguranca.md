@@ -19,7 +19,8 @@
 - **Um administrador do servidor consegue ler a chave e a senha.** A proteção é contra usuários comuns e contra o vazamento do arquivo de senha sozinho.
 - **O `config.xml` contém segredos:** hashes de senha, chaves de VPN e certificados. Fora do servidor, use `-Encrypt`.
 - **Não aponte para um pfSense pela internet.** Use o IP da LAN ou uma VPN.
-- **Logs (versão 2):** os privilégios dos **pacotes** (pfBlockerNG, Suricata, Squid) também permitem **alterar** esses pacotes, porque o pfSense não tem "só leitura" para eles. Inclua só os que for coletar. Os privilégios dos logs do sistema são só de leitura. A verificação do instalador continua **reprovando** um usuário que acesse o gerenciador de usuários, as regras, o prompt de comandos ou a edição de arquivos.
+- **Logs pelo SSH (versão 2.1):** o usuário de backup ganha `User - System: Shell account access`, mas a chave do servidor é **travada**: só funciona do IP do servidor, sem terminal, e só lista e lê uma lista fixa de arquivos de log. O instalador **reprova** uma chave que execute outro comando. **Atenção:** se o SSH do pfSense aceitar senha, a **senha** desse usuário abre um terminal (não root). Ligue *SSHd Key Only*.
+- **Logs pela WebGUI (versão 2):** os privilégios dos **pacotes** (pfBlockerNG, Suricata, Squid) também permitem **alterar** esses pacotes, porque o pfSense não tem "só leitura" para eles. Inclua só os que for coletar. Os privilégios dos logs do sistema são só de leitura. A verificação do instalador continua **reprovando** um usuário que acesse o gerenciador de usuários, as regras, o prompt de comandos ou a edição de arquivos.
 - **Os logs e a planilha de visitantes têm dados pessoais** (IP, navegação, nome, CPF). Eles ficam na mesma pasta travada para `SYSTEM` + `Administradores`. Combine com o cliente quem consulta e por quanto tempo guardar (`LogKeepDays`, padrão 400 dias). É a LGPD.
 - **O relatório de auditoria não mostra segredos**, mas descreve a rede inteira. Trate como documento interno.
 - **LightSquid em HTTP:** a senha do LightSquid trafega aberta na rede. Ative o SSL no pacote.
@@ -41,6 +42,9 @@ Tudo o que ele cria, altera ou baixa, e como desfazer:
 | Cria a tarefa diária, como `SYSTEM` | Agendador: `pfSense Backup - <Nome>` | `-Uninstall` |
 | (v2, se ligar os logs) Cria a tarefa da coleta, como `SYSTEM` | Agendador: `pfSense Logs - <Nome>` | `-NoLogs` ou `-Uninstall` |
 | (v2) Grava a senha do LightSquid cifrada, se houver | `secrets\<Nome>.lightsquid.pass` | `-Uninstall` |
+| (v2.1, modo SSH) Baixa o OpenSSH oficial da Microsoft, **só se faltar e com autorização** | `C:\pfSense-Backup\bin\OpenSSH\` | apagar a pasta |
+| (v2.1, modo SSH) Gera a chave SSH do servidor e fixa a chave do pfSense | `secrets\<Nome>.ssh_ed25519`, `.known_hosts` | `-Uninstall` |
+| (v2.1, modo SSH) Grava a linha da chave travada para colar no pfSense | `config\<Nome>-chave-ssh-pfsense.txt` | `-Uninstall` |
 | (v2) Grava logs, planilhas e relatórios | `logs-pfsense\`, `visitantes\`, `lightsquid\`, `auditoria\`, `state\` | apagar na mão |
 | Grava log e status do Zabbix | `logs\<Nome>\`, `status\<Nome>\` | `-Uninstall` remove o status; o log fica |
 

@@ -55,6 +55,10 @@
 .PARAMETER BaseDir
     Pasta raiz da instalacao. Padrao: a pasta deste script.
 
+.PARAMETER PrintKeyFor
+    (Instalador) Arquivo .pub da chave SSH: imprime a linha travada para colar no
+    pfSense (Authorized SSH Keys) e sai. Use junto com -KeyFrom <IP deste servidor>.
+
 .PARAMETER CheckOnly
     Nao grava logs. So confere: login, acesso a cada fonte pedida e que o
     usuario NAO acessa paginas administrativas. Usado pelo instalador.
@@ -70,7 +74,11 @@ param(
 
     [string]$BaseDir,
 
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+
+    # Usado pelo instalador: imprime a linha da chave travada para o pfSense e sai.
+    [string]$PrintKeyFor,
+    [string]$KeyFrom
 )
 
 $ErrorActionPreference = 'Stop'
@@ -1112,6 +1120,12 @@ function Invoke-LogCollection {
 # ------------------------------- main ---------------------------------
 # So roda o main quando executado como script (os testes carregam as funcoes sem rodar isto).
 if ($MyInvocation.InvocationName -eq '.' -or $env:PFSENSE_BACKUP_NO_MAIN) { return }
+
+if ($PrintKeyFor) {
+    if (-not $KeyFrom) { Write-Host 'Informe -KeyFrom <IP deste servidor>.'; exit 1 }
+    Write-Output (Get-AuthorizedKeyLine ((Get-Content $PrintKeyFor -Raw).Trim()) $KeyFrom)
+    exit 0
+}
 
 $exitCode = 0
 $pass = $null

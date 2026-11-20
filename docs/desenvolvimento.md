@@ -8,6 +8,7 @@
 Backup-pfSense.ps1          motor: login na WebGUI, download, validação, retenção, status
 Logs-pfSense.ps1            (v2) coleta incremental dos logs pela WebGUI
 Relatorio-pfSense.ps1       (v2) relatório de auditoria HTML a partir do config.xml
+pfsense/                    (v2.1) script de apoio que roda NO pfSense (permissões dos logs)
 Install-pfSenseBackup.ps1   instalador: perguntas, segredos, pinning, verificação, tarefa
 config/EXEMPLO.json.example modelo do JSON de um perfil
 docs/                       documentação
@@ -53,6 +54,7 @@ Versão 2 (`tests/Test-Logs.ps1`, mesmo pfSense simulado, que ganhou as telas de
 9. `-CheckOnly` dos logs: aponta a fonte sem privilégio e não acusa administrador.
 10. Primeira coleta: cada fonte na sua pasta e dia, a planilha de visitantes (BOM, acento, CPF, voucher) e as concessões de DHCP.
 11. Coletas seguintes: nada duplica, linhas novas entram uma vez só e a lacuna vira `AVISO`.
+13. Modo SSH (`tests/fake_ssh.sh` roda o **comando forçado real** sobre uma pasta que imita o pfSense): a trava recusa 9 tentativas de burla, `-CheckOnly` reprova chave sem trava, primeira coleta (inclusive autenticação, Suricata por interface e `dhcpd.leases`), só bytes novos com linha incompleta, log que gira para `.bz2` sem perder nem duplicar, arquivo reescrito sem duplicar e o formato da linha do `authorized_keys`.
 12. Relatório de auditoria com os `config.xml` de exemplo de `tests/fixtures/`: seções, mudanças, pontos de atenção e **nenhum segredo** no HTML.
 
 O motor de logs é carregado nos testes por *dot-source* (`. .\Logs-pfSense.ps1 -Name X`). Nesse modo o script para antes do `main`. Mantenha o `main` depois da linha que confere `$MyInvocation.InvocationName`.

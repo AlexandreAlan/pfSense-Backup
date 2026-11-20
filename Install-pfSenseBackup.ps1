@@ -183,13 +183,19 @@ param(
     [switch]$NoLogs,                             # desliga a coleta de logs
     [string]$LogSources,                         # ex.: 'sistema,portal,openvpn,firewall'
     [ValidateRange(5, 720)][int]$LogEvery = 60,          # minutos entre coletas (schtasks: ate 720)
-    [ValidateRange(500, 200000)][int]$LogLines = 5000,   # linhas pedidas por log a cada coleta
+    [ValidateRange(500, 200000)][int]$LogLines = 10000,  # (modo web) linhas pedidas por log a cada coleta
     [ValidateRange(30, 3650)][int]$LogKeepDays = 400,    # dias guardados
     [string]$LogsGroup = 'LOGS-PFSENSE',         # grupo com os privilegios de logs (so nas instrucoes)
     [string]$LightSquidUrl,                      # ex.: http://172.16.10.1:7445  ('' desliga)
     [string]$LightSquidUser,
     [switch]$UpdateLightSquidPassword,
-    [switch]$NoReport                            # nao gera o relatorio de auditoria
+    [switch]$NoReport,                           # nao gera o relatorio de auditoria
+
+    # ------------- versao 2.1: logs pelo SSH (chave travada) -------------
+    [ValidateSet('ssh', 'web')][string]$LogTransport,    # ssh = arquivos completos (recomendado); web = telas da WebGUI
+    [ValidateRange(1, 65535)][int]$SshPort,             # porta do SSH do pfSense (System > Advanced > Admin Access)
+    [string]$SshFrom,                            # IP deste servidor visto pelo pfSense (trava da chave)
+    [switch]$TrustNewSshKey                      # aceita uma chave SSH do pfSense diferente da fixada
 )
 
 $ErrorActionPreference = 'Stop'
@@ -209,9 +215,13 @@ $LogsEngine   = Join-Path $BaseDir 'Logs-pfSense.ps1'
 $ReportEngine = Join-Path $BaseDir 'Relatorio-pfSense.ps1'
 $LsPassFile   = Join-Path $SecDir  "$Name.lightsquid.pass"
 $LogsTaskName = "pfSense Logs - $Name"
-$ToolVersion   = '2.0.0'   # versao do pfSense-Backup
-$SchemaVersion = 2         # versao do formato do config\<Nome>.json (1 = sem o campo)
+$SshKeyFile   = Join-Path $SecDir  "$Name.ssh_ed25519"
+$KnownHosts   = Join-Path $SecDir  "$Name.known_hosts"
+$KeyLineFile  = Join-Path $CfgDir  "$Name-chave-ssh-pfsense.txt"
+$ToolVersion   = '2.1.0'   # versao do pfSense-Backup
+$SchemaVersion = 3         # versao do formato do config\<Nome>.json (1 = sem o campo; 3 = logs pelo SSH)
 $DefaultLogSources = 'sistema,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes'
+$DefaultSshSources = 'sistema,autenticacao,portal,openvpn,ipsec,dhcp,dns,gateways,firewall,pfblockerng,suricata,squid,squidguard,dhcp-concessoes'
 
 function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok([string]$m)   { Write-Host "    OK  $m" -ForegroundColor Green }
@@ -315,7 +325,7 @@ if ($Uninstall) {
     if ($LASTEXITCODE -eq 0){ Ok "tarefa '$LogsTaskName' removida" }
     $stt = Join-Path $BaseDir "state\$Name"
     if (Test-Path $stt) { Remove-Item $stt -Recurse -Force; Ok "apagado $stt (controle da coleta de logs)" }
-    foreach ($f in @($CfgFile, $KeyFile, $PassFile, $EncFile, $LsPassFile)) {
+    foreach ($f in @($CfgFile, $KeyFile, $PassFile, $EncFile, $LsPassFile, $SshKeyFile, "$SshKeyFile.pub", $KnownHosts, $KeyLineFile)) {
         if (Test-Path $f) { Remove-Item $f -Force; Ok "apagado $f" }
     }
     $st = Join-Path $BaseDir "status\$Name"
@@ -481,7 +491,41 @@ if ($logsOn -and $logsAsked) {
     }
 }
 
-if ($logsOn -and -not $Yes -and ($logsAsked -or $upgrading -or $PSBoundParameters.ContainsKey('Logs'))) {
+# Como os logs chegam: SSH (arquivos completos, chave travada) ou WebGUI (telas).
+$transport = 'web'
+if ($LogTransport) { $transport = $LogTransport }
+elseif ($existing -and $existing.LogTransport) { $transport = [string]$existing.LogTransport }
+elseif ($logsOn -and -not $Yes) {
+    Write-Host ''
+    Write-Host '  COMO BUSCAR OS LOGS' -ForegroundColor Yellow
+    Write-Host '  -------------------'
+    Write-Host '  1. SSH com chave TRAVADA (recomendado): le os ARQUIVOS de log do pfSense,'
+    Write-Host '     completos (inclusive firewall e autenticacao), so os bytes novos, quase sem'
+    Write-Host '     peso no pfSense. A chave so funciona deste servidor, sem terminal, e so lista'
+    Write-Host '     e le os logs. Nao precisa de privilegio de pacote na WebGUI.'
+    Write-Host '  2. WebGUI: le as telas de log. Sem SSH, mas com limite de linhas (o firewall'
+    Write-Host '     costuma passar) e pede privilegios que tambem ALTERAM os pacotes.'
+    $ans = Read-Host '  Escolha [1]'
+    if ($ans -match '^\s*2') { $transport = 'web' } else { $transport = 'ssh' }
+}
+if (-not $PSBoundParameters.ContainsKey('SshPort')) { $SshPort = 22; if ($existing -and $existing.SshPort) { $SshPort = [int]$existing.SshPort } }
+if (-not $SshFrom -and $existing -and $existing.SshFrom) { $SshFrom = [string]$existing.SshFrom }
+# No SSH entra tambem a autenticacao (logins na WebGUI/SSH), que a WebGUI nao entrega.
+if ($transport -eq 'ssh' -and -not $LogSources -and $srcFinal -eq $DefaultLogSources) { $srcFinal = $DefaultSshSources }
+if ($logsOn -and $transport -eq 'ssh') {
+    if (-not $PSBoundParameters.ContainsKey('SshPort') -and -not ($existing -and $existing.SshPort) -and -not $Yes) {
+        $n = 0
+        $SshPort = [int](Read-Valor 'Porta do SSH do pfSense (System > Advanced > Admin Access)' "$SshPort" { param($v) [int]::TryParse($v, [ref]$n) -and $n -ge 1 -and $n -le 65535 } 'porta invalida')
+    }
+    if (-not $SshFrom) {
+        try { $SshFrom = [string](@(Find-NetRoute -RemoteIPAddress $FwHost -ErrorAction Stop | Where-Object { $_.IPAddress })[0].IPAddress) } catch {}
+        if (-not $Yes) { $SshFrom = Read-Valor 'IP deste servidor visto pelo pfSense (a chave so vai funcionar dele)' $SshFrom { param($v) $v -match '^\d{1,3}(\.\d{1,3}){3}$' } 'use um IPv4, ex.: 172.16.10.7' }
+        if (-not $SshFrom) { throw 'Informe -SshFrom <IP deste servidor> (a chave SSH fica travada nesse IP).' }
+    }
+    Ok "logs pelo SSH: porta $SshPort, chave travada ao IP $SshFrom"
+}
+
+if ($logsOn -and $transport -eq 'web' -and -not $Yes -and ($logsAsked -or $upgrading -or $PSBoundParameters.ContainsKey('Logs'))) {
     Write-Host ''
     Write-Host '  PRE-REQUISITO DOS LOGS NO pfSense' -ForegroundColor Yellow
     Write-Host '  ---------------------------------'
@@ -510,7 +554,7 @@ if ($logsOn -and -not $Yes -and ($logsAsked -or $upgrading -or $PSBoundParameter
         $logsOn = $false
     }
 }
-if ($logsOn) { Ok "coleta de logs: a cada $LogEvery min, $LogLines linhas por log, guarda $LogKeepDays dias - fontes: $srcFinal" }
+if ($logsOn) { Ok "coleta de logs: a cada $LogEvery min, guarda $LogKeepDays dias - fontes: $srcFinal" }
 else { Ok 'coleta de logs: desligada (ligue depois com -Logs)' }
 if ($LightSquidUrl -and $logsOn) { Ok "LightSquid: $LightSquidUrl" }
 if ($reportOn) { Ok 'relatorio de auditoria: ligado (auditoria\<Nome>\ a cada backup que muda a configuracao)' }
@@ -669,6 +713,64 @@ Ok "$curl  ($(($verCurl -split ' ')[0..1] -join ' '))"
 # So grava no JSON se nao for o do Windows; assim o motor acha o mesmo curl.
 $curlSalvar = if ($curl -ieq $curlSys) { '' } else { $curl }
 
+# ----------------------- OpenSSH (logs pelo SSH) ----------------------
+# Server 2019+ / Windows 10 1809+ trazem o cliente OpenSSH (recurso opcional);
+# o Server 2016 nao. Mesma ideia do curl: explica e so baixa com autorizacao.
+$sshExe = $null; $sshSalvar = ''
+if ($logsOn -and $transport -eq 'ssh') {
+    Step 'OpenSSH (cliente)'
+    $sshSys = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe'
+    $sshBin = Join-Path $BaseDir 'bin\OpenSSH\ssh.exe'
+    foreach ($c in @(([string](Get-Existing 'SshPath' '')), $sshSys, $sshBin)) { if ($c -and (Test-Path $c)) { $sshExe = $c; break } }
+    if (-not $sshExe) {
+        $arqZip = if ([Environment]::Is64BitOperatingSystem) { 'OpenSSH-Win64.zip' } else { 'OpenSSH-Win32.zip' }
+        $urlSsh = "https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/$arqZip"
+        Write-Host ''
+        Write-Host '  O cliente OpenSSH NAO foi encontrado neste servidor' -ForegroundColor Yellow
+        Write-Host '  ---------------------------------------------------'
+        Write-Host '  O QUE E:     o OpenSSH oficial da Microsoft para Windows (o mesmo que vem no'
+        Write-Host '               Windows 10/11 e no Server 2019+), projeto PowerShell/Win32-OpenSSH.'
+        Write-Host '  POR QUE:     a coleta de logs le os arquivos de log do pfSense por SSH,'
+        Write-Host '               criptografado, com uma chave travada so para isso.'
+        Write-Host "  DE ONDE:     $urlSsh"
+        Write-Host "  ONDE FICA:   so a pasta $(Split-Path $sshBin -Parent)"
+        Write-Host '  O QUE NAO E FEITO: nao instala servico, nao abre porta, nao mexe no PATH.'
+        Write-Host '               Para remover, basta apagar a pasta.'
+        Write-Host ''
+        $ok_ = $Yes
+        if (-not $Yes) { $ok_ = ((Read-Host '  Baixar o OpenSSH oficial agora e colocar nessa pasta? (S/N)') -match '^[sSyY]') }
+        if (-not $ok_) { throw 'Instalacao cancelada: o modo SSH precisa do OpenSSH. Rode de novo com -LogTransport web para usar a WebGUI.' }
+        $tmpZip = Join-Path $env:TEMP ("openssh_" + [guid]::NewGuid().ToString('N') + '.zip')
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            Write-Host "    baixando $urlSsh ..."
+            $progAntes = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+            try { Invoke-WebRequest -Uri $urlSsh -OutFile $tmpZip -UseBasicParsing }
+            catch { throw "nao consegui baixar o OpenSSH ($($_.Exception.Message)). Copie a pasta OpenSSH-Win64 do ZIP para $(Split-Path $sshBin -Parent) e rode de novo." }
+            finally { $ProgressPreference = $progAntes }
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [IO.Compression.ZipFile]::OpenRead($tmpZip)
+            try {
+                $pasta = Split-Path $sshBin -Parent
+                if (-not (Test-Path $pasta)) { New-Item -ItemType Directory -Force $pasta | Out-Null }
+                foreach ($en in $zip.Entries) {
+                    if (-not $en.Name) { continue }   # pasta
+                    [IO.Compression.ZipFileExtensions]::ExtractToFile($en, (Join-Path $pasta $en.Name), $true)
+                }
+            } finally { $zip.Dispose() }
+        } finally { Remove-Item $tmpZip -Force -ErrorAction SilentlyContinue }
+        if (-not (Test-Path $sshBin)) { throw "o ZIP do OpenSSH nao trouxe o ssh.exe (o formato mudou?)." }
+        Ok "OpenSSH colocado em $(Split-Path $sshBin -Parent)"
+        Ok "SHA-256 do ssh.exe: $((Get-FileHash $sshBin -Algorithm SHA256).Hash)"
+        $sshExe = $sshBin
+    }
+    $sshDir = Split-Path $sshExe -Parent
+    $keygen = Join-Path $sshDir 'ssh-keygen.exe'; $keyscan = Join-Path $sshDir 'ssh-keyscan.exe'
+    foreach ($x in @($keygen, $keyscan)) { if (-not (Test-Path $x)) { throw "$x nao encontrado (OpenSSH incompleto)." } }
+    Ok "$sshExe ($((& $sshExe -V 2>&1 | Select-Object -First 1) -join ''))"
+    if ($sshExe -ine $sshSys) { $sshSalvar = $sshExe }
+}
+
 # ------------------------ 4. chave e senhas ---------------------------
 Step 'Chave e senha'
 if (-not (Test-Path $KeyFile)) {
@@ -757,6 +859,69 @@ if ($wc) {
     Warn 'perfil fica SEM pinning: rode o instalador de novo com o pfSense acessivel.'
 }
 
+# ------------- 5b. chave SSH e chave do pfSense (logs pelo SSH) -------------
+if ($logsOn -and $transport -eq 'ssh') {
+    Step 'Chave SSH deste servidor'
+    if (-not (Test-Path $SshKeyFile)) {
+        # -N '""': senha vazia (no PS 5.1 um "" sozinho some da linha de comando).
+        & $keygen -q -t ed25519 -N '""' -C "pfSense-Backup-$Name@$env:COMPUTERNAME" -f $SshKeyFile | Out-Null
+        if (-not (Test-Path $SshKeyFile)) { throw 'ssh-keygen nao gerou a chave.' }
+        Ok "chave gerada: $SshKeyFile"
+    } else { Ok 'chave ja existia, mantida' }
+    # O OpenSSH do Windows recusa chave privada que outros usuarios possam ler: dono = Administradores.
+    $ErrorActionPreference = 'Continue'; & icacls.exe $SshKeyFile /setowner $SidAdmins /C /Q 2>&1 | Out-Null; $ErrorActionPreference = 'Stop'
+
+    Step "Chave SSH do pfSense (fixada como o certificado) - ${FwHost}:$SshPort"
+    $scan = @(& $keyscan -p $SshPort -t ed25519 $FwHost 2>$null | Where-Object { $_ -match 'ssh-ed25519' })
+    if ($scan.Count -eq 0) { throw "o pfSense nao respondeu ao SSH em ${FwHost}:$SshPort (SSH ligado? porta certa? regra liberando este servidor?)." }
+    $tmpKh = Join-Path $SecDir ("kh_" + [guid]::NewGuid().ToString('N'))
+    Set-Content -Path $tmpKh -Value $scan[0] -Encoding ASCII
+    $fpSsh = ((& $keygen -lf $tmpKh) -join ' ')
+    $novo = ($scan[0] -split '\s+')[2]
+    if (Test-Path $KnownHosts) {
+        $antigo = ((Get-Content $KnownHosts -Raw) -split '\s+')[2]
+        if ($antigo -ne $novo -and -not $TrustNewSshKey) {
+            Remove-Item $tmpKh -Force
+            throw ("A chave SSH do pfSense MUDOU desde o cadastro.`n    agora: $fpSsh`n" +
+                   "    Se o pfSense foi reinstalado, confira e rode de novo com -TrustNewSshKey. Se nao foi, alguem pode estar se passando pelo firewall.")
+        }
+        Ok 'chave do pfSense igual a fixada'
+    } else {
+        Ok "impressao digital: $fpSsh"
+        if (-not $Yes) {
+            Write-Host '    Confira no pfSense (Diagnostics > Command Prompt, ou console):'
+            Write-Host '        ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+            $ans = Read-Host '    A impressao digital confere? (S/N)'
+            if ($ans -notmatch '^[sSyY]') { Remove-Item $tmpKh -Force; throw 'Instalacao cancelada: chave SSH do pfSense nao confirmada.' }
+        }
+    }
+    Move-Item $tmpKh $KnownHosts -Force
+    Ok "chave do pfSense fixada: $KnownHosts"
+
+    $linha = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsEngine -Name $Name -BaseDir $BaseDir -PrintKeyFor "$SshKeyFile.pub" -KeyFrom $SshFrom) -join ''
+    if ($linha -notmatch '^restrict,from=') { throw "nao consegui montar a linha da chave: $linha" }
+    Set-Content -Path $KeyLineFile -Value $linha -Encoding ASCII
+    Write-Host ''
+    Write-Host '  PRE-REQUISITO DOS LOGS PELO SSH NO pfSense' -ForegroundColor Yellow
+    Write-Host '  -----------------------------------------'
+    Write-Host "  1. System > User Manager > Users > '$User' > Edit:"
+    Write-Host "       Authorized SSH Keys: cole a linha INTEIRA do arquivo"
+    Write-Host "           $KeyLineFile"
+    Write-Host '       (abra no Bloco de Notas, Ctrl+A, Ctrl+C. E uma linha so, comeca com restrict,from=)'
+    Write-Host "       Effective Privileges > Add: 'User - System: Shell account access'"
+    Write-Host '       (a chave e travada: so lista e le os logs, mesmo com esse privilegio)'
+    Write-Host '  2. Deixe os logs legiveis pelo grupo do usuario: rode no pfSense, a cada 10 min'
+    Write-Host '     (cron), o script pfsense\pfsense-backup-permissoes.sh deste repositorio.'
+    Write-Host '     Passo a passo em docs\logs.md (secao "Modo SSH").'
+    Write-Host '  3. Recomendado: SSH so com chave (System > Advanced > Admin Access > SSHd Key Only).'
+    Write-Host '     Sem isso, a SENHA do usuario de backup tambem abre um terminal no pfSense.'
+    Write-Host ''
+    if (-not $Yes) {
+        $ans = Read-Host '  Ja fez os passos 1 e 2? (S/N - com N a tarefa de logs fica criada e passa a funcionar quando fizer)'
+        if ($ans -notmatch '^[sSyY]') { Warn 'sem os passos no pfSense a verificacao abaixo vai falhar; rode o instalador de novo depois.' }
+    }
+}
+
 # --------------------------- 6. config JSON ---------------------------
 Step 'Gravando configuracao'
 $cfg = [ordered]@{
@@ -787,6 +952,11 @@ $cfg = [ordered]@{
     LogMaxTime     = [int](Get-Existing 'LogMaxTime' 600)
     LightSquidUrl  = [string]$LightSquidUrl
     LightSquidUser = [string]$LightSquidUser
+    LogTransport   = [string]$transport
+    SshPort        = $SshPort
+    SshUser        = [string]$User
+    SshFrom        = [string]$SshFrom
+    SshPath        = [string]$sshSalvar
 }
 New-Object psobject -Property $cfg | ConvertTo-Json | Set-Content -Path $CfgFile -Encoding ASCII
 Ok $CfgFile
@@ -827,7 +997,10 @@ if ($logsOn -and -not $NoTest) {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $LogsEngine -Name $Name -BaseDir $BaseDir -CheckOnly
     $rcLogs = $LASTEXITCODE
     if ($rcLogs -eq 0) { Ok 'usuario le todas as fontes pedidas e continua sem acesso administrativo' }
-    elseif ($rcLogs -eq 2) { Warn "faltam privilegios para algumas fontes (linhas FALTA acima). A coleta segue com as outras; inclua os privilegios no grupo $LogsGroup ou tire a fonte com -LogSources." }
+    elseif ($rcLogs -eq 2) {
+        if ($transport -eq 'ssh') { Warn 'algumas fontes nao foram achadas (linhas FALTA acima): pacote nao instalado ou o script de permissoes ainda nao rodou no pfSense. A coleta segue com as outras.' }
+        else { Warn "faltam privilegios para algumas fontes (linhas FALTA acima). A coleta segue com as outras; inclua os privilegios no grupo $LogsGroup ou tire a fonte com -LogSources." }
+    }
     else {
         Warn 'verificacao dos logs REPROVADA (veja a mensagem acima). A tarefa de logs NAO sera criada; o backup segue normal.'
         $logsOn = $false

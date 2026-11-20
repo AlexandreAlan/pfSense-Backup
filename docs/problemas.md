@@ -42,6 +42,11 @@ A mensagem aparece no log (`C:\pfSense-Backup\logs\<Nome>\<Nome>.log`), em `stat
 | `<fonte>: sem acesso ...` no status `AVISO` | Mesmo caso, durante a coleta | Idem, ou tirar a fonte com `-LogSources` |
 | `possivel lacuna (mais de N linhas ...)` | O pfSense gerou mais linhas do que o pedido entre duas coletas | Aumentar `-LogLines` (ex.: 20000) ou diminuir `-LogEvery` (ex.: 15) |
 | `verificacao dos logs REPROVADA` | Login falhou ou o usuário ficou com privilégio administrativo | Ler a mensagem acima; o backup continua normal |
+| `a chave SSH NAO esta travada` | A linha colada no pfSense não é a gerada pelo instalador (sem o `command=`) | Colar a linha inteira de `config\<Nome>-chave-ssh-pfsense.txt` |
+| `o pfSense recusou a chave SSH do servidor` | Chave não colada no usuário, ou sem `Shell account access` | Ver [Logs › Modo SSH](logs.md#preparar-o-pfsense) |
+| `a chave SSH do pfSense NAO confere` | pfSense reinstalado ou outro equipamento no lugar | Conferir e rodar o instalador com `-TrustNewSshKey` |
+| `FALTA <fonte> -> nao encontrado ou sem permissao de leitura` | Script de permissões não rodou, ou o pacote não existe | Rodar `pfsense-backup-permissoes.sh` no pfSense e agendar |
+| `o pfSense nao respondeu ao SSH` | SSH desligado, porta errada ou regra bloqueando | Conferir a porta (`-SshPort`) e a regra para o IP do servidor |
 | `lightsquid: usuario/senha do LightSquid recusados` | Senha do LightSquid mudou | `-UpdateLightSquidPassword` |
 | `outra coleta deste firewall ainda esta rodando` | A coleta anterior ainda não terminou | Normal de vez em quando; se for sempre, aumente `-LogEvery` |
 | Relatório não gerado: `configuracao nao mudou` | Nada mudou desde o backup anterior | Normal: o `ultimo.html` continua valendo. `-Force` gera mesmo assim |
