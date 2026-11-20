@@ -210,7 +210,10 @@ Cenario 'primeira coleta: tudo, inclusive firewall e autenticacao' {
     $esp = @{ 'sistema' = 4; 'autenticacao' = 1; 'portal-visitantes' = 1; 'firewall' = 6; 'pfblockerng/ip_block' = 3; 'suricata/LAN/alertas' = 1; 'squidguard-bloqueios' = 1 }
     foreach ($k in $esp.Keys) {
         $n = Linhas (ArqSsh $k)
-        if ($n -ne $esp[$k]) { throw "$k`: $n linha(s) (esperado $($esp[$k]))" }
+        if ($n -ne $esp[$k]) {
+            $arvore = (Get-ChildItem (Join-Path $sw 'logs-pfsense') -Recurse -File | ForEach-Object { $_.FullName.Substring($sw.Length) }) -join ' ; '
+            throw "$k`: $n linha(s) (esperado $($esp[$k])). Contagem: $(($script:Counts.Keys | ForEach-Object { "$_=$($script:Counts[$_])" }) -join ', '). Avisos: $($script:Warnings -join ' | '). Arquivos: $arvore"
+        }
     }
     $d = Get-Date
     $csv = Join-Path $sw "visitantes/SSHT/$($d.ToString('yyyy'))/acessos-$($d.ToString('yyyy-MM')).csv"
