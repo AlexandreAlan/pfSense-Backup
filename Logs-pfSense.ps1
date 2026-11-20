@@ -719,10 +719,20 @@ function Invoke-Ssh([string[]]$Remote) {
            '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$KnownHosts", '-o', 'GlobalKnownHostsFile=none',
            '-o', "ConnectTimeout=$timeout", '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
            '-o', 'LogLevel=ERROR', "$sshUser@$($cfg.Host)") + @($Remote | ForEach-Object { if ($script:SshRoot -and "$_".StartsWith('/')) { $script:SshRoot + $_ } else { $_ } })
-    $p = Start-Process -FilePath $script:Ssh -ArgumentList $a -NoNewWindow -Wait -PassThru `
-        -RedirectStandardOutput $OutFile -RedirectStandardError $err
+    if ([Environment]::OSVersion.Platform -eq 'Win32NT') {
+        # Windows PowerShell: Start-Process passa o handle do arquivo ao processo (byte a byte).
+        $p = Start-Process -FilePath $script:Ssh -ArgumentList $a -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $OutFile -RedirectStandardError $err
+        $code = $p.ExitCode
+    } else {
+        # Fora do Windows (so nos testes): o Start-Process copia linha a linha e mudaria
+        # os bytes; o shell redireciona direto, como o Windows faz.
+        $q = ($a | ForEach-Object { "'" + ("$_" -replace "'", "'\''") + "'" }) -join ' '
+        & /bin/sh -c "exec '$($script:Ssh)' $q > '$OutFile' 2> '$err'"
+        $code = $LASTEXITCODE
+    }
     $e = (Read-Text $err).Trim()
-    if ($p.ExitCode -eq 255) {
+    if ($code -eq 255) {
         if ($e -match 'Host key verification failed|IDENTIFICATION HAS CHANGED|No .* host key is known') {
             Stop-Permanent "a chave SSH do pfSense NAO confere com a fixada no cadastro ($KnownHosts). Se o pfSense foi reinstalado, confira e rode o instalador com -TrustNewSshKey. Se nao foi, alguem pode estar se passando pelo firewall."
         }
@@ -731,7 +741,7 @@ function Invoke-Ssh([string[]]$Remote) {
         }
         throw "ssh falhou: $e"
     }
-    return [pscustomobject]@{ Code = $p.ExitCode; Err = $e; Out = $OutFile }
+    return [pscustomobject]@{ Code = $code; Err = $e; Out = $OutFile }
 }
 
 function Get-SshList {
