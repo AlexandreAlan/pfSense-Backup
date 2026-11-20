@@ -182,7 +182,7 @@ param(
     [switch]$Logs,                               # liga a coleta de logs sem perguntar
     [switch]$NoLogs,                             # desliga a coleta de logs
     [string]$LogSources,                         # ex.: 'sistema,portal,openvpn,firewall'
-    [ValidateRange(5, 1440)][int]$LogEvery = 60,         # minutos entre coletas
+    [ValidateRange(5, 720)][int]$LogEvery = 60,          # minutos entre coletas (schtasks: ate 720)
     [ValidateRange(500, 200000)][int]$LogLines = 5000,   # linhas pedidas por log a cada coleta
     [ValidateRange(30, 3650)][int]$LogKeepDays = 400,    # dias guardados
     [string]$LogsGroup = 'LOGS-PFSENSE',         # grupo com os privilegios de logs (so nas instrucoes)
