@@ -560,6 +560,6 @@ try {
     }
     exit 0
 } catch {
-    Write-Host "ERRO ao gerar o relatorio: $($_.Exception.Message)"
+    Write-Host "ERRO ao gerar o relatorio: $($_.Exception.Message) (linha $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))"
     exit 1
 }

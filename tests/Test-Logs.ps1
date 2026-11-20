@@ -150,8 +150,8 @@ $fx = Join-Path $PSScriptRoot 'fixtures'
 $out = Join-Path $WorkDir 'auditoria-teste.html'
 Cenario 'gera o HTML com as secoes, as mudancas e os pontos de atencao' {
     & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $repo 'Relatorio-pfSense.ps1') -Name 'TESTE' -BaseDir $WorkDir `
-        -File (Join-Path $fx 'config-exemplo.xml') -Previous (Join-Path $fx 'config-anterior.xml') -OutFile $out | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "saiu com $LASTEXITCODE" }
+        -File (Join-Path $fx 'config-exemplo.xml') -Previous (Join-Path $fx 'config-anterior.xml') -OutFile $out *>&1 | Tee-Object -Variable saida | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "saiu com $LASTEXITCODE`: $($saida -join ' ')" }
     $h = [IO.File]::ReadAllText($out, $enc)
     $tem = @('fw-exemplo.exemplo.local', 'id="regras"', 'Visitantes nao acessam a LAN', 'NAO lan', 'id="vpn"', 'VPN fornecedor',
              'sem CRL', 'Regra criada', 'Regra alterada', 'Usuario alterado', 'Alias alterado', 'Usuario criado', 'maria.vpn',
